@@ -9,7 +9,7 @@ import type {
     RegistryRecord
 } from "#types/records"
 import type { MergeStringTuples } from "#types/utils"
-import type { Merge } from "#utils"
+import type { Merge, UnionToIntersection } from "#utils"
 
 export interface Param<
     NAME extends string = string,
@@ -72,6 +72,24 @@ type OptionalRequestKeys<REQ> = {
     [K in keyof REQ]-?: undefined extends REQ[K] ? K : never
 }[keyof REQ]
 
+/** `keyof` a union yields only shared keys; this keeps the keys of every member. */
+type KeysOfUnion<T> = T extends unknown ? keyof T : never
+
+/**
+ * Every hired module's own request shape, intersected. `HIRED[number]` is a
+ * union, so intersecting is what makes `hire(a, b)` demand the open params and
+ * interfaces of both — a union would let `.request()` satisfy just one member.
+ * Hired trademarks drop out: one hire fills them even when a sibling still
+ * lists them transitively.
+ */
+type HiredRequest<HIRED extends UnknownModule[]> =
+    Omit<
+        UnionToIntersection<HIRED[number]["_reqType"]>,
+        HIRED[number]["tm"]
+    > extends infer REQ extends Partial<MarketRecord<UnknownService>> ?
+        REQ
+    :   {}
+
 /**
  * Request shape after `hire()`. Parent-optional keys (including `ctx` omissions)
  * stay optional; hired trademarks drop; remaining hired deps merge in.
@@ -84,12 +102,12 @@ export type AfterHireRequest<
         [SERVICE in HIRED[number] as SERVICE["tm"]]?: Supplier<SERVICE>
     },
     Merge<
-        HIRED[number]["_reqType"],
+        HiredRequest<HIRED>,
         Omit<
             THIS["_reqType"],
             | HIRED[number]["tm"]
             | Exclude<
-                  keyof HIRED[number]["_oldReqType"],
+                  KeysOfUnion<HIRED[number]["_oldReqType"]>,
                   OptionalRequestKeys<THIS["_reqType"]>
               >
         >

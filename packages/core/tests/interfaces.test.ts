@@ -135,6 +135,76 @@ describe("interfaces", () => {
         expect($fraction.hire($fromDb, $clock).request({}).get()).toBe("e1t")
     })
 
+    it("type-errors request() for transitive interfaces required by any hired module", () => {
+        const $rangeCursor = service("rangeCursor").interface<{ start: string }>()
+        const $minBidInterface = service("minBid").interface<string>()
+
+        const $minBid = $minBidInterface.implement({
+            required: [$rangeCursor],
+            factory: ({ rangeCursor }) => rangeCursor.start
+        })
+
+        const $createPost = service("createPost").module({
+            factory: () => "post"
+        })
+
+        const $postBid = service("postBid").module({
+            required: [$minBidInterface],
+            factory: ({ minBid }) => minBid
+        })
+
+        const hired = $postBid.hire($minBid, $createPost)
+
+        expect(() =>
+            hired.request(
+                // @ts-expect-error - Property 'rangeCursor' is missing
+                {}
+            )
+        ).toThrow('Missing "rangeCursor". Pass .of(...) or hire an implement.')
+
+        expect(
+            hired.request(index($rangeCursor.of({ start: "s" }))).get()
+        ).toBe("s")
+    })
+
+    it("accumulates open interfaces across chained hire() calls", () => {
+        const $rangeCursor = service("rangeCursor").interface<{ start: string }>()
+        const $minBidInterface = service("minBid").interface<string>()
+
+        const $minBid = $minBidInterface.implement({
+            required: [$rangeCursor],
+            factory: ({ rangeCursor }) => rangeCursor.start
+        })
+
+        const $createPost = service("createPost").module({
+            factory: () => "post"
+        })
+
+        const $postBid = service("postBid").module({
+            required: [$minBidInterface],
+            factory: ({ minBid }) => minBid
+        })
+
+        const chained = $postBid.hire($minBid).hire($createPost)
+
+        expect(() =>
+            chained.request(
+                // @ts-expect-error - Property 'rangeCursor' is missing
+                {}
+            )
+        ).toThrow('Missing "rangeCursor". Pass .of(...) or hire an implement.')
+
+        expect(
+            chained.request(index($rangeCursor.of({ start: "s" }))).get()
+        ).toBe("s")
+
+        const $fromRoute = $rangeCursor.implement({
+            factory: () => ({ start: "route" })
+        })
+
+        expect(chained.hire($fromRoute).request({}).get()).toBe("route")
+    })
+
     it("wires a shared module through a hired next implement at the entry-point", () => {
         const $edition = service("edition").interface<{
             start: string
