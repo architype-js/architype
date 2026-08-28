@@ -1,4 +1,4 @@
-import { main } from "#service/main"
+import { moduleBase } from "#service/main"
 import type { ModulePlanGuard } from "#types/guards"
 import { assertModulePlan } from "#validation"
 import type {
@@ -8,7 +8,6 @@ import type {
     UnknownModule,
     Mock as MockType
 } from "#types/public"
-import { simpleId } from "#utils"
 
 /**
  * Creates a mock version of this module with difsferent dependencies.
@@ -43,14 +42,13 @@ export function Mock() {
             OPTIONALS2
         >
         assertModulePlan(this.tm, modulePlan)
-        const mock = main(this.tm, modulePlan)
+        const mock = moduleBase(this.tm, modulePlan)
 
         return {
             ...this,
             ...mock,
             hired: [] as [],
             _mock: true as const,
-            _implementId: simpleId(),
             _oldReqType: this._reqType,
             _oldSuppliesType: this._suppliesType
         } satisfies MockType<THIS, TYPE2, REQUIRED2, OPTIONALS2> as any

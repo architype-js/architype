@@ -25,6 +25,46 @@ export interface Param<
         this: THIS,
         value: THIS["_type"]
     ) => Param<THIS["tm"], THIS["_type"], THIS["_type"]>
+    /**
+     * Creates a module that fills this param (same trademark). Hire it at the
+     * request entry-point so dependents that `required` the param receive this
+     * implementation.
+     *
+     * Pass `awaited: true` when the factory returns `Promise<T>` but the param
+     * (and module `_type`) stay `T`.
+     */
+    module: <
+        THIS extends Param<NAME, TYPE, INIT>,
+        const AWAITED extends boolean | undefined = undefined,
+        TYPE2 extends (
+            AWAITED extends true ? THIS["_type"] | Promise<THIS["_type"]>
+            :   THIS["_type"]
+        ) = AWAITED extends true ? THIS["_type"] | Promise<THIS["_type"]>
+        :   THIS["_type"],
+        REQUIRED2 extends OriginalService[] = [],
+        OPTIONALS2 extends Param[] = []
+    >(
+        this: THIS,
+        plan: ModulePlanGuard<
+            THIS["tm"],
+            TYPE2,
+            REQUIRED2,
+            OPTIONALS2,
+            AWAITED
+        >
+    ) => Module<
+        THIS["tm"],
+        AWAITED extends true ? THIS["_type"] : TYPE2,
+        OPTIONALS2[number]["tm"],
+        undefined,
+        Request<{
+            required: REQUIRED2
+            optionals: OPTIONALS2
+        }>,
+        [],
+        false,
+        EffectiveAwaited<AWAITED, REQUIRED2>
+    >
     _type: TYPE
     _param: true
     _mock: false
@@ -34,39 +74,44 @@ export interface Param<
      * its field required in the REQUEST type.
      */
     _init: INIT
+    /** True after `.init(...)` — missing required params without this throw at request. */
+    _inited: boolean
 }
 
 /**
- * An interface: trademark + value type, no factory. Fill it with `.of(value)`
- * or `.implement(...)` then `hire` the implement at the entry-point.
+ * Plan for `module()` / `mock()`.
+ * When chaining on a sync param, pass `awaited: true` so an async factory keeps
+ * `_type` as the param’s `T` (not `Promise<T>`) — dependents receive the awaited value.
  */
-export interface Interface<NAME extends string = string, TYPE = unknown>
-    extends Service<NAME, TYPE> {
-    implement: <
-        THIS extends Interface<NAME, TYPE>,
-        TYPE2 extends THIS["_type"],
-        REQUIRED2 extends OriginalService[] = [],
-        OPTIONALS2 extends Param[] = []
-    >(
-        this: THIS,
-        plan: ModulePlanGuard<THIS["tm"], TYPE2, REQUIRED2, OPTIONALS2>
-    ) => Implement<THIS, TYPE2, REQUIRED2, OPTIONALS2>
-    _interface: true
-    _param: false
-    _module: false
-    _mock: false
-}
-
 export type PartialModulePlan<
     TYPE,
     REQUIRED extends OriginalService[] = [],
-    OPTIONALS extends Param[] = []
+    OPTIONALS extends Param[] = [],
+    AWAITED extends boolean | undefined = undefined
 > = {
     required?: [...REQUIRED]
     optionals?: [...OPTIONALS]
     factory: Factory<TYPE, REQUIRED, OPTIONALS>
     warmup?: Warmup<TYPE, REQUIRED, OPTIONALS>
-}
+} & (AWAITED extends true ? { awaited: true }
+:   AWAITED extends false ? { awaited?: false }
+:   { awaited?: AWAITED })
+
+/** True when any module in the list is `_awaited: true` (params are skipped). */
+export type RequiredHaveAwaited<REQUIRED extends readonly unknown[]> =
+    REQUIRED extends [infer FIRST, ...infer REST extends unknown[]] ?
+        FIRST extends { _awaited: infer A } ?
+            A extends true ? true
+            :   RequiredHaveAwaited<REST>
+        :   RequiredHaveAwaited<REST>
+    :   false
+
+export type EffectiveAwaited<
+    PLAN_AWAITED extends boolean | undefined,
+    REQUIRED extends readonly unknown[]
+> =
+    PLAN_AWAITED extends true ? true
+    :   RequiredHaveAwaited<REQUIRED>
 
 type OptionalRequestKeys<REQ> = {
     [K in keyof REQ]-?: undefined extends REQ[K] ? K : never
@@ -77,8 +122,8 @@ type KeysOfUnion<T> = T extends unknown ? keyof T : never
 
 /**
  * Every hired module's own request shape, intersected. `HIRED[number]` is a
- * union, so intersecting is what makes `hire(a, b)` demand the open params and
- * interfaces of both — a union would let `.request()` satisfy just one member.
+ * union, so intersecting is what makes `hire(a, b)` demand the open params
+ * of both — a union would let `.request()` satisfy just one member.
  * Hired trademarks drop out: one hire fills them even when a sibling still
  * lists them transitively.
  */
@@ -121,7 +166,8 @@ export interface Module<
     CALLER extends Pick<ModuleSupplier<UnknownModule>, "market"> | undefined,
     REQUEST extends Partial<MarketRecord<UnknownService>>,
     HIRED extends string[],
-    MOCK extends boolean = boolean
+    MOCK extends boolean = boolean,
+    AWAITED extends boolean = false
 > extends Service<NAME, TYPE> {
     /** Calls the module by providing the specified dependencies */
     request: <THIS extends UnknownModule>(
@@ -162,12 +208,18 @@ export interface Module<
                 [K in keyof HIRED]: HIRED[K]["tm"]
             }
         >,
-        THIS["_mock"]
+        THIS["_mock"],
+        THIS["_awaited"] extends true ? true : RequiredHaveAwaited<HIRED>
     >
     _module: true
     _param: false
-    _interface: false
     _type: TYPE
+    /**
+     * When true, `.get()` returns `Promise<_type>`: either `awaited: true` on the
+     * plan (value is awaited before dependents see it), or a required/hired
+     * dependency that is itself `_awaited`.
+     */
+    _awaited: AWAITED
     _optionalKeys: OPTIONAL_KEYS
     _caller: CALLER
     _reqType: REQUEST
@@ -181,13 +233,12 @@ export interface Module<
     _team: UnknownService[]
     _hired: HIRED
     /** Factory function that creates the service's value from its dependencies */
-    _factory: (deps: any, ctx: any) => TYPE
+    _factory: (deps: any, ctx: any) => TYPE | Promise<TYPE>
     /** Optional initialization function called after factory */
     _warmup?: (value: any, deps: any) => void
     _caching?: CachingConfig<TYPE>
     _version: number
-    _implement?: boolean
-    _implementId?: string
+    _implementId: string
     _resolve: <THIS extends UnknownModule>(
         this: THIS,
         lazyMarket: RegistryRecord
@@ -195,7 +246,7 @@ export interface Module<
     _mock: MOCK
 }
 
-export type UnknownService = UnknownModule | Param | Interface
+export type UnknownService = UnknownModule | Param
 export type OriginalService = UnknownService & {
     _mock: false
 }
@@ -207,6 +258,7 @@ export type UnknownModule = Module<
     ModuleSupplier<UnknownModule> | undefined,
     Partial<MarketRecord<any>>,
     string[],
+    boolean,
     boolean
 >
 
@@ -236,40 +288,22 @@ export type Mock<
     _oldSuppliesType: MODULE["_suppliesType"]
 }
 
-export type Implement<
-    INTERFACE extends Interface,
-    TYPE2 extends INTERFACE["_type"],
-    REQUIRED2 extends OriginalService[] = [],
-    OPTIONALS2 extends Param[] = []
-> = Module<
-    INTERFACE["tm"],
-    TYPE2,
-    OPTIONALS2[number]["tm"],
-    undefined,
-    Request<{
-        required: REQUIRED2
-        optionals: OPTIONALS2
-    }>,
-    [],
-    false
-> & {
-    _implement: true
-    _implementId: string
-}
-
-/**
- * Represents a supplier - The result of resolving a module
- * with all its dependencies, which can easily be passed
- * to other modules.
- *
- * @typeParam NAME - The unique identifier name for this supplier
- * @typeParam VALUE - The type of value this supplier holds
- * @public
- */
 export type ModuleSupplier<MODULE extends UnknownModule> = {
     service: MODULE
-    get: () => MODULE["_type"]
-    supplies: MODULE["_suppliesType"]
+    /**
+     * When `_awaited`, one Promise around the resolved value — never
+     * `Promise<Promise<…>>` even if `_type` was inferred as `Promise<T>`
+     * from an async factory (the runner already awaits it).
+     */
+    get: () => MODULE["_awaited"] extends true ? Promise<Awaited<MODULE["_type"]>>
+    :   MODULE["_type"]
+    /**
+     * Sync teams: unwrapped dep values (`.get()` of each supply).
+     * Awaited teams: `Promise` of that same bag after awaiting `_awaited` deps
+     * (matches what the factory receives — sync-typed leaves need no await).
+     */
+    supplies: MODULE["_awaited"] extends true ? Promise<MODULE["_suppliesType"]>
+    :   MODULE["_suppliesType"]
     market: Market<MODULE>
     _requested: boolean
 }
@@ -280,15 +314,8 @@ export type ParamSupplier<PARAM extends Param> = {
     _requested: true
 }
 
-export type InterfaceSupplier<INTERFACE extends Interface> = {
-    service: INTERFACE
-    get: () => INTERFACE["_type"]
-    _requested: true
-}
-
 export type Supplier<SERVICE extends UnknownService> =
     SERVICE extends Param ? ParamSupplier<SERVICE>
-    : SERVICE extends Interface ? InterfaceSupplier<SERVICE>
     : ModuleSupplier<Extract<SERVICE, UnknownModule>>
 
 /**

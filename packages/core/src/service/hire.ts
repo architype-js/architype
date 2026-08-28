@@ -1,6 +1,11 @@
 import { team } from "#service/main"
 import type { HiredGuard } from "#types/guards"
-import type { AfterHireRequest, Module, UnknownModule } from "#types/public"
+import type {
+    AfterHireRequest,
+    Module,
+    RequiredHaveAwaited,
+    UnknownModule
+} from "#types/public"
 import type { Supplies } from "#types/records"
 import type { MergeStringTuples } from "#types/utils"
 import { assertModules } from "#validation"
@@ -36,7 +41,8 @@ export function Hire() {
                 [K in keyof HIRED]: HIRED[K]["tm"]
             }
         >,
-        THIS["_mock"]
+        THIS["_mock"],
+        THIS["_awaited"] extends true ? true : RequiredHaveAwaited<HIRED>
     > {
         assertModules(this.tm, hired, true)
         const mergedServices = [
@@ -62,11 +68,19 @@ export function Hire() {
         const _reqType = null as unknown as AfterHireRequest<THIS, HIRED>
         const _suppliesType = null as unknown as Supplies<typeof _reqType>
 
+        const _awaited = (this._awaited ||
+            hired.some((module) => module._awaited)) as THIS["_awaited"] extends (
+            true
+        ) ?
+            true
+        :   RequiredHaveAwaited<HIRED>
+
         return {
             ...this,
             _required: mergedServices,
             _hired: mergedHired,
             _team: team(this.tm, mergedServices, this._optionals),
+            _awaited,
             _reqType,
             _suppliesType,
             _caller: {
@@ -93,7 +107,8 @@ export function Hire() {
                     [K in keyof HIRED]: HIRED[K]["tm"]
                 }
             >,
-            THIS["_mock"]
-        > as any
+            THIS["_mock"],
+            THIS["_awaited"] extends true ? true : RequiredHaveAwaited<HIRED>
+        >
     }
 }

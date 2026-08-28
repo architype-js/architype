@@ -9,12 +9,11 @@ import type {
     Param,
     UnknownService
 } from "#types/public"
-import { assertTM } from "#validation"
-import { dedupe, isModule } from "#utils"
+import { assertTM, assertModulePlan } from "#validation"
+import { dedupe, isModule, simpleId } from "#utils"
 
-export function param<TM extends string, TYPE = any>(
-    tm: TM
-): Param<TM, TYPE, never> {
+/** Properties shared by params and modules (trademark, `.of`, `.init`). */
+export function shared<TM extends string, TYPE = any>(tm: TM) {
     assertTM(tm)
     return {
         tm,
@@ -32,20 +31,24 @@ export function param<TM extends string, TYPE = any>(
             } as any
         },
         init<THIS extends Param>(this: THIS, value: THIS["_type"]) {
-            return { ...this, _init: value } as Param<
+            return { ...this, _init: value, _inited: true as const } as Param<
                 THIS["tm"],
                 THIS["_type"],
                 THIS["_type"]
             >
         },
         _type: null as unknown as TYPE,
-        _param: true as const,
         _mock: false as const,
-        _init: undefined as never
+        _init: undefined as never,
+        _inited: false as const
     }
 }
 
-export function main<
+/**
+ * Module graph node without `mock` / `hire`. Used by `service().module` and by
+ * `Mock()` (which must not re-enter the mock/hire attachment).
+ */
+export function moduleBase<
     TM extends string,
     TYPE,
     REQUIRED extends OriginalService[] = [],
@@ -61,51 +64,65 @@ export function main<
     tm: TM,
     plan: PartialModulePlan<TYPE, REQUIRED, OPTIONALS>
 ): Omit<
-    Module<TM, TYPE, OPTIONALS[number]["tm"], undefined, REQUEST, [], boolean>,
+    Module<
+        TM,
+        TYPE,
+        OPTIONALS[number]["tm"],
+        undefined,
+        REQUEST,
+        [],
+        boolean,
+        boolean
+    >,
     "mock" | "hire" | "_mock"
 > {
-    const _team = team(tm, plan.required ?? [], plan.optionals ?? [])
+    assertModulePlan(tm, plan)
 
+    const required = plan.required ?? []
+    const optionals = plan.optionals ?? []
+    const planAwaited = plan.awaited === true
+    const depsAwaited = [...required, ...optionals].some(
+        (service) => isModule(service) && service._awaited
+    )
+    const _awaited = planAwaited || depsAwaited
+
+    const _team = team(tm, required, optionals)
     const _reqType = null as unknown as REQUEST
-
     const _suppliesType = null as unknown as Supplies<REQUEST>
 
     return {
-        ...param<TM, TYPE>(tm),
+        ...shared<TM, TYPE>(tm),
         request,
         provision,
-        invalidate,
+        invalidate() {
+            if (!this._caching) {
+                throw new Error(
+                    `Cannot invalidate "${this.tm}" because invalidate() only applies to cached modules.`
+                )
+            }
+            this._version += 1
+        },
         caching,
         _factory: plan.factory,
         _resolve,
-        _required: plan.required ?? [],
-        _optionals: plan.optionals ?? [],
+        _required: required,
+        _optionals: optionals,
         _team,
         _hired: [] as [],
         _warmup: plan.warmup,
         _version: 0,
         _param: false as const,
         _module: true as const,
-        _interface: false as const,
+        _awaited,
         _type: null as unknown as TYPE,
         _caller: undefined,
         _optionalKeys: null as unknown as OPTIONALS[number]["tm"],
         _reqType,
         _suppliesType,
         _oldReqType: _reqType,
-        _oldSuppliesType: _suppliesType
+        _oldSuppliesType: _suppliesType,
+        _implementId: simpleId()
     }
-}
-
-function invalidate<
-    THIS extends { _caching?: unknown; _version: number; tm: string }
->(this: THIS) {
-    if (!this._caching) {
-        throw new Error(
-            `Cannot invalidate "${this.tm}" because invalidate() only applies to cached modules.`
-        )
-    }
-    this._version += 1
 }
 
 export function team(

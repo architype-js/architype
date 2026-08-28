@@ -65,19 +65,20 @@ export type CircularModuleError = {
 }
 
 /**
- * Valid plan argument for `module()` / `mock()` / `implement()`. Invalid plans become error types.
+ * Valid plan argument for `module()` / `mock()`. Invalid plans become error types.
  * @public
  */
 export type ModulePlanGuard<
     TM extends string,
     TYPE,
     REQUIRED extends OriginalService[] = [],
-    OPTIONALS extends Param[] = []
+    OPTIONALS extends Param[] = [],
+    AWAITED extends boolean | undefined = undefined
 > =
     PlanHasDuplicate<REQUIRED, OPTIONALS> extends true ? DuplicateServiceError
     : TeamHasCircular<TM, REQUIRED, OPTIONALS> extends true ?
         CircularModuleError
-    :   PartialModulePlan<TYPE, REQUIRED, OPTIONALS>
+    :   PartialModulePlan<TYPE, REQUIRED, OPTIONALS, AWAITED>
 
 type FilterHired<
     REQUIRED extends OriginalService[],

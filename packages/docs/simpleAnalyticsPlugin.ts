@@ -10,7 +10,7 @@ export default function simpleAnalyticsPlugin(): Plugin {
                         tagName: "script",
                         attributes: {
                             src: "https://scripts.simpleanalyticscdn.com/latest.js",
-                            async: true,
+                            awaited: true,
                             "data-collect-dnt": true
                         }
                     },

@@ -134,18 +134,6 @@ export function assertCachingConfig(name: string, config: unknown) {
     assertFunction(`${name}.caching`, config.serializer)
 }
 
-export function assertInterface(
-    service: unknown
-): asserts service is import("#types/public").Interface {
-    assertHasProperty("noname", service, "tm")
-    assertString("noname", service.tm)
-
-    assertHasProperty(service.tm, service, "_interface")
-    if (!service._interface) {
-        throw new TypeError(`${service.tm} is not an interface`)
-    }
-}
-
 export function assertParam(service: unknown): asserts service is Param {
     assertHasProperty("noname", service, "tm")
     assertString("noname", service.tm)
@@ -200,12 +188,7 @@ export function assertServices(
             assertParam(tm)
             return
         } catch {
-            try {
-                assertInterface(tm)
-                return
-            } catch {
-                assertModule(tm, allowMocks)
-            }
+            assertModule(tm, allowMocks)
         }
     })
 }

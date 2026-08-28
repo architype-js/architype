@@ -15,6 +15,75 @@ const resourceCaching = {
 }
 
 describe("caching", () => {
+    describe("_requested flag", () => {
+        it("sets _requested true for explicit .of() stamps", () => {
+            const $id = service("id").param<string>()
+            const $mod = service("mod").module({
+                required: [$id],
+                factory: ({ id }) => id
+            })
+
+            const supplier = $mod.request(index($id.of("a")))
+            expect(supplier.market.id._requested).toBe(true)
+            expect($id.of("a")._requested).toBe(true)
+        })
+
+        it("sets _requested true for init soft-fill (via .of(_init))", () => {
+            const $config = service("config").param<string>().init("default")
+            const $mod = service("modWithInit").module({
+                required: [$config],
+                factory: ({ config }) => config
+            })
+
+            const supplier = $mod.request({})
+            expect(supplier.market.config._requested).toBe(true)
+            expect(supplier.market.config.get()).toBe("default")
+        })
+
+        it("sets _requested true for omitted optional params soft-filled with of(_init)", () => {
+            const $optional = service("optional").param<number>()
+            const $mod = service("modOptional").module({
+                optionals: [$optional],
+                factory: ({ optional }) => optional ?? -1
+            })
+
+            const supplier = $mod.request({})
+            expect(supplier.market.optional._requested).toBe(true)
+            expect(supplier.market.optional.get()).toBeUndefined()
+        })
+
+        it("sets _requested false for factory-resolved modules", () => {
+            const $db = service("db").module({
+                factory: () => ({ ok: true })
+            })
+            const $mod = service("modWithDb").module({
+                required: [$db],
+                factory: ({ db }) => db
+            })
+
+            const supplier = $mod.request({})
+            expect(supplier.market.db._requested).toBe(false)
+            expect(supplier._requested).toBe(false)
+        })
+
+        it("sets _requested true when a module is stamped with .of()", () => {
+            const $db = service("db").module({
+                factory: () => ({ ok: false })
+            })
+            const $mod = service("modStampedDb").module({
+                required: [$db],
+                factory: ({ db }) => db
+            })
+
+            const stamped = $db.of({ ok: true })
+            expect(stamped._requested).toBe(true)
+
+            const supplier = $mod.request(index(stamped))
+            expect(supplier.market.db._requested).toBe(true)
+            expect(supplier.market.db.get()).toEqual({ ok: true })
+        })
+    })
+
     it("rejects invalidate() on modules without caching", () => {
         const $module = service("uncached").module({
             factory: () => "value"

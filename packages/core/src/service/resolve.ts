@@ -4,8 +4,7 @@ import type {
     UnknownService,
     Supplier,
     UnknownModule,
-    ModuleSupplier,
-    CachingConfig
+    ModuleSupplier
 } from "#types/public"
 import type { MarketPlan, RegistryRecord, SuppliesPlan } from "#types/records"
 import { isModule, once, type Merge } from "#utils"
@@ -40,6 +39,11 @@ export function CtxFactory<
     }
 }
 
+type SyncSupplies<THIS extends UnknownModule> = SuppliesPlan<{
+    required: THIS["_required"]
+    optionals: THIS["_optionals"]
+}>
+
 /**
  * Internal resolve method that creates the actual supplier.
  *
@@ -54,6 +58,8 @@ export function _resolve<THIS extends UnknownModule>(
 ): Supplier<THIS> {
     const { supplies, market } = Object.entries(registry).reduce(
         (acc, [name, registration]) => {
+            if (!this._team.some((service) => service.tm === name)) return acc
+
             const loadSupplier = once(() => {
                 if (typeof registration === "function") {
                     return registration()
@@ -78,10 +84,7 @@ export function _resolve<THIS extends UnknownModule>(
             return acc
         },
         {
-            supplies: {} as SuppliesPlan<{
-                required: THIS["_required"]
-                optionals: THIS["_optionals"]
-            }>,
+            supplies: {} as SyncSupplies<THIS>,
             market: {} as MarketPlan<{
                 required: THIS["_required"]
                 optionals: THIS["_optionals"]
@@ -89,13 +92,32 @@ export function _resolve<THIS extends UnknownModule>(
         }
     )
 
-    const factoryRunner = () => {
+    const assertRequired = () => {
         this._required.forEach((service) => {
             if (!(service.tm in supplies)) {
                 // This error will be catched in warmup phase, but will trigger if get() is called again afterwards.
                 throw new Error(`Dependency ${service.tm} is not available`)
             }
         })
+    }
+
+    // One real Promise of the unwrapped bag (shared with the async factory).
+    const awaitedSupplies = once(async (): Promise<SyncSupplies<THIS>> => {
+        assertRequired()
+        const resolved = {} as SyncSupplies<THIS>
+        for (const name of Object.keys(market)) {
+            const sub = (market as Record<string, Supplier<UnknownService>>)[
+                name
+            ]!
+            const raw = (supplies as Record<string, unknown>)[name]
+            ;(resolved as Record<string, unknown>)[name] =
+                isModule(sub.service) && sub.service._awaited ? await raw : raw
+        }
+        return resolved
+    })
+
+    const syncFactoryRunner = () => {
+        assertRequired()
         const value = this._factory(supplies, CtxFactory(supplier, this))
         if (this._warmup) {
             this._warmup(value, supplies)
@@ -103,22 +125,36 @@ export function _resolve<THIS extends UnknownModule>(
         return value
     }
 
+    const asyncFactoryRunner = async () => {
+        const awaited = await awaitedSupplies()
+        const value = await this._factory(awaited, CtxFactory(supplier, this))
+        if (this._warmup) {
+            this._warmup(value, awaited)
+        }
+        return value
+    }
+
     const _caching = this._caching
-    const get =
+    const teamAwaited =
+        this._awaited ||
+        this._team.some((member) => isModule(member) && member._awaited)
+    const runner = teamAwaited ? asyncFactoryRunner : syncFactoryRunner
+    const get = once(
         _caching ?
-            once(
-                _caching.cacher(
-                    factoryRunner,
-                    buildCacheKey({ ...this, _caching }, registry)
-                )
+            _caching.cacher(
+                runner,
+                buildCacheKey({ ...this, _caching }, registry)
             )
-        :   once(factoryRunner)
+        :   runner
+    )
 
     const supplier = {
         tm: this.tm,
         get,
         market,
-        supplies,
+        get supplies() {
+            return teamAwaited ? awaitedSupplies() : supplies
+        },
         service: this,
         _ctx<SERVICE extends UnknownService>(service: SERVICE) {
             return CtxFactory(supplier, this.service)(service)
