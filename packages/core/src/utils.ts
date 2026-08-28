@@ -32,8 +32,8 @@ export function dedupe(services: UnknownService[]) {
     const deduped: Record<string, UnknownService> = {}
     for (const service of services) {
         const existing = deduped[service.tm]
-        // A module fills an interface; a later transitive interface must not reopen it.
-        if (existing && isModule(existing) && isInterface(service)) continue
+        // A hired module fills a param; a later transitive param must not reopen it.
+        if (existing && isModule(existing) && !isModule(service)) continue
         deduped[service.tm] = service
     }
     return Object.values(deduped)
@@ -105,10 +105,10 @@ export function isModule<MODULE extends UnknownModule>(
     return "_module" in service && service._module === true
 }
 
-export function isInterface<INTERFACE extends { _interface: true }>(
-    service: INTERFACE | Pick<UnknownService, "tm">
-): service is INTERFACE {
-    return "_interface" in service && service._interface === true
+export function isParam<PARAM extends { _param: true }>(
+    service: PARAM | Pick<UnknownService, "tm">
+): service is PARAM {
+    return "_param" in service && service._param === true
 }
 
 export function isModuleSupplier<SUPPLIER extends Supplier<UnknownService>>(

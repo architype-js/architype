@@ -233,8 +233,6 @@ describe("Optionals Feature", () => {
                 }
             })
 
-            // Missing a required param is a type error (caught above); at
-            // runtime it simply resolves to undefined rather than throwing.
             expect(
                 // @ts-expect-error - missing required service
                 $service.request(index($optional.of(42))).get()

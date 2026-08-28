@@ -27,7 +27,7 @@ const message = $greeting.request(index($session.of({ userId: "ada" }))).get()
 
 Declare params, compose modules, request a module with concrete inputs. That's it
 
-Only params need to be provided at the request entry-point, and Typescript will tell you exactly what you need to provide. All transitive modules are auto-wired. In the chain above, only $session needs to be provided to .request(). Interfaces are the exception: they have no factory, so the entry-point must `hire` an implement.
+Only params need to be provided at the request entry-point, and Typescript will tell you exactly what you need to provide. All transitive modules are auto-wired. In the chain above, only $session needs to be provided to .request().
 
 ---
 
@@ -176,6 +176,8 @@ const dashboard = await $dashboard.request(index($session.of(session))).get()
 
 `$profile` and `$notifications` both need `$session` and `$db`, but they do not need each other. Requesting `$dashboard` kicks off $dashboard, $notifications and $profile factories all in parallel and in the background.
 
+Without `awaited: true`, an async factory still infers `_type` as `Promise<T>`, so dependents see promises and `await` them as above. Prefer [`awaited: true`](#awaited-modules) when you want `_type` to stay `T` and the runner to unwrap deps before factories run.
+
 That eager background resolution is the default, but you can control it per factory.
 
 Make the loading **lazy** by returning functions from factories.
@@ -238,6 +240,37 @@ const $dashboard = service("dashboard").module({
 
 Now profile and notifications are still loaded eagerly, but you can toggle easily just by removing or commenting out their warmup function. You don't need to refactor all dependent call sites from **await value** to **await value()** when you toggle, they stay as **await value()**
 
+### Awaited modules
+
+Pass `awaited: true` when a factory returns `Promise<T>` but the module’s `_type` should stay **`T`**. The runner awaits that module (and every `_awaited` supply in the bag) before dependents run, so other factories receive the unwrapped value — not a Promise.
+
+```ts
+const $edition = service("edition").param<{ id: string }>()
+
+const $editionFromDb = $edition.module({
+    awaited: true,
+    required: [$editionId, $db],
+    factory: async ({ editionId, db }) => db.editions.findById(editionId)
+})
+
+const $title = service("title").module({
+    required: [$editionFromDb],
+    factory: ({ edition }) => {
+        // `edition` is `{ id: string }`, not `Promise<{ id: string }>`
+        return edition.id
+    }
+})
+
+const title = await $title.request(index($editionId.of(id))).get()
+```
+
+What that means in practice:
+
+- **`_type` stays `T`.** Without `awaited: true`, an async factory on a sync param is a type error (or a standalone `service().module({ factory: async … })` infers `_type` as `Promise<T>`).
+- **Dependents stay sync.** Factories that `required` an `_awaited` module see `T` in their supplies. No `await edition` inside every consumer.
+- **`.get()` is one Promise.** Any module whose team includes an `_awaited` member has `.get()` typed as `Promise<Awaited<_type>>` — never `Promise<Promise<T>>`, even if the factory itself is `async`.
+- **`supplier.supplies` matches the factory bag.** On an awaited team it is `Promise<{ … }>` of those same unwrapped values: `const { edition } = await supplier.supplies`.
+
 ### Cache Invalidation Cascades
 
 In most frameworks, cache invalidation must be done manually. Paramodules understand cache dependencies, so invalidating one module cascades and invalidates all dependents. The trick is to use the whole dependency graph to build the module's cache key.
@@ -262,7 +295,7 @@ const $cartProducts = service("cartProducts")
         factory: ({ cart }) =>
             db.products.findManyById(cart.items.map((item) => item.productId))
     })
-    .caching(syncCaching)
+    .caching(valueCaching)
 
 const $checkoutQuote = service("checkoutQuote")
     .module({
@@ -342,30 +375,28 @@ const $myDrafts = service("myDrafts").module({
 
 ## Core Vocabulary
 
-| Term                  | What it is                                                                                |
-| --------------------- | ----------------------------------------------------------------------------------------- |
-| `service(tm)`         | Declare a named identity. `tm` is the runtime-validated graph key (trademark).            |
-| `.param<T>()`         | A typed runtime input supplied at the request entry point.                                |
-| `.init(value)`        | Give a param a default value so it can be omitted from `request(...)`.                    |
-| `.interface<T>()`     | An interface: trademark + type, no factory. Dependents `required` it; entry-points `hire` an implement. |
-| `.implement({ ... })` | A module that fills an interface. Same trademark, constrained value type.                 |
-| `.module({ ... })`    | A graph node: a value derived from params and other modules.                              |
-| `required`            | Dependencies that must be available to the factory.                                       |
-| `optionals`           | Params a module can use if supplied; factories see them as `T \| undefined`.              |
-| `factory`             | The function that produces the module value from inferred supplies and `ctx`.             |
-| `warmup`              | Optional hook invoked after the factory returns, useful for eager warming of lazy values. |
-| `.caching(config)`    | Enable cross-request caching after `.module(...)`.                                        |
-| `.of(value)`          | Stamp a concrete value onto a param, interface, or module, producing a supplier.          |
-| `.request(...)`       | Resolve a module for one set of supplied inputs.                                          |
-| `.provision()`        | Pre-resolve graph parts that do not depend on open request-time params.                   |
-| `.invalidate()`       | Bump a cached module's version so it and downstream cached modules recompute.             |
-| `.mock()` + `.hire()` | Replace part of a cascade without changing downstream call sites.                         |
-| `.implement()` + `.hire()` | Fill an interface at the entry-point. Remaining interfaces still show up as missing `.request()` properties. |
-| `ctx(...)`            | Create a nested request scope from inside a factory.                                      |
-| `index(...)`          | Key suppliers by trademark for the object shape `.request(...)` expects.                  |
-| `supplier.get()`      | Read the requested module's value.                                                        |
-| `supplier.supplies`   | Read resolved values for the graph, keyed by trademark.                                   |
-| `supplier.market`     | Read suppliers for the graph, keyed by trademark.                                         |
+| Term                            | What it is                                                                                                                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `service(tm)`                   | Declare a named identity. `tm` is the runtime-validated graph key (trademark).                                                               |
+| `.param<T>()`                   | A typed runtime input supplied at the request entry point.                                                                                   |
+| `.init(value)`                  | Give a param a default value so it can be omitted from `request(...)`.                                                                       |
+| `.module({ ... })`              | A graph node: a value derived from params and other modules. Chain after `.param()` to fill that param.                                      |
+| `required`                      | Dependencies that must be available to the factory.                                                                                          |
+| `optionals`                     | Params a module can use if supplied; factories see them as `T \| undefined`.                                                                 |
+| `factory`                       | The function that produces the module value from inferred supplies and `ctx`.                                                                |
+| `warmup`                        | Optional hook invoked after the factory returns, useful for eager warming of lazy values.                                                    |
+| `.caching(config)`              | Enable cross-request caching after `.module(...)`.                                                                                           |
+| `.of(value)`                    | Stamp a concrete value onto a param or module, producing a supplier (enters the cache key).                                                  |
+| `.request(...)`                 | Resolve a module for one set of supplied inputs.                                                                                             |
+| `.provision()`                  | Pre-resolve graph parts that do not depend on open request-time params.                                                                      |
+| `.invalidate()`                 | Bump a cached module's version so it and downstream cached modules recompute.                                                                |
+| `.mock()` + `.hire()`           | Replace part of a cascade without changing downstream call sites.                                                                            |
+| `.param().module()` + `.hire()` | Fill a shared param at the entry-point with a same-trademark module. Remaining open params still show up as missing `.request()` properties. |
+| `ctx(...)`                      | Create a nested request scope from inside a factory.                                                                                         |
+| `index(...)`                    | Key suppliers by trademark for the object shape `.request(...)` expects.                                                                     |
+| `supplier.get()`                | Read the requested module's value.                                                                                                           |
+| `supplier.supplies`             | Read resolved values for the graph, keyed by trademark.                                                                                      |
+| `supplier.market`               | Read suppliers for the graph, keyed by trademark.                                                                                            |
 
 ---
 
@@ -601,7 +632,7 @@ const $profile = service("profile")
         required: [$session],
         factory: ({ session }) => db.profiles.findByUserId(session.userId)
     })
-    .caching(syncCaching)
+    .caching(valueCaching)
 
 const $profileSummary = service("profileSummary")
     .module({
@@ -655,7 +686,7 @@ const res6 = $profileSummary
 const isCached5 = res5 === res6 // false, because the hired mock has its own _implementId
 ```
 
-The cache key is built from the cached module identity and its cascade: the current module trademark, its version, implement identity when present (implements and mocks), transitive module versions, and serialized params. Interfaces are keyed like modules: a hired implement contributes `tm` + implement id + `_version`; a `.of(...)` stamp contributes the trademark only. The key builder never serializes an interface value. That means different request params get different cache entries, invalidating an upstream cached module changes the cache key for downstream cached modules, and two implements of the same interface do not share an entry.
+The cache key is built from the cached module identity and its cascade: the current module trademark, its version, implement identity when present (param-chained modules and mocks), transitive module versions, and **every stamped (`.of(...)`) value** — params and modules alike. Factory-resolved modules contribute identity only (`tm` + implement id + `_version`); their inputs are already keyed through the cascade. The serializer runs on stamped values and should reject anything it cannot handle. That means different request stamps get different cache entries, invalidating an upstream cached module changes the cache key for downstream cached modules, and two hired fills of the same param do not share an entry.
 
 For promise-returning factories, use `@paramodules/resource-cacher`, which wraps `@epic-web/cachified`.
 
@@ -770,45 +801,6 @@ const profile = $profile.hire($userMock).request({}).get()
 
 `.hire(...)` returns a new module with mocks merged into its graph. A mock may have a smaller, larger, or different dependency shape than the module it replaces. The request type updates accordingly.
 
-### Interfaces (dependency inversion)
-
-An **interface** is a trademark and a value type, with no factory. Use it when a leaf package owns modules that need a concept implemented upstream (for example shared bidding modules that need the current edition, which next loads from the route). Shared cannot import next — that would be a cycle — so it `required`s the interface, and the entry-point fills it with `.of(...)` or `hire`s next's implement.
-
-```ts
-// shared — interface + modules that depend on it
-const $edition = service("edition").interface<{
-    start: string
-    end: string
-} | null>()
-
-const $remaining = service("remaining").module({
-    required: [$edition, $now],
-    factory: ({ edition, now }) => {
-        if (!edition) return 0
-        const start = new Date(edition.start).getTime()
-        const end = new Date(edition.end).getTime()
-        const t = new Date(now()).getTime()
-        return (end - t) / (end - start)
-    }
-})
-
-// next — real module, same trademark
-const $editionFromRoute = $edition.implement({
-    required: [$editionId, $db],
-    factory: async ({ editionId, db }) =>
-        db.editions.findById(editionId)
-})
-
-// libraries required: [$edition]  // the shared interface, never next's module by import path
-// entry-point — hire the implement, or stamp a value:
-$page.hire($editionFromRoute).request(index($editionId.of(id))).get()
-$page.request(index($edition.of(row))).get()
-```
-
-`.implement(...)` returns a module. Hire it at the entry-point like a mock; remaining open interfaces still appear as missing `.request()` properties (the same as required params). Nested `ctx(...).request(...)` only omits keys the parent already has — a new context may still need `.of(...)` or `hire(...)`. `.request()` throws at runtime if an interface is still open.
-
-Interfaces can also be stamped with `.of(value)`. Stamp the interface you `required`, or `hire` an implement — not a param or module of the same trademark. Caching treats an interface as a module: hired implement identity (`tm` + implement id + `_version`), or the trademark when stamped. The value is never serialized. If the value belongs in the cache key, use a param.
-
 ---
 
 ## Factory Lifecycle
@@ -870,7 +862,7 @@ The entry point. `tm` must be a valid JavaScript identifier: letters, digits, `_
 const $session = service("session").param<{ userId: string }>()
 ```
 
-Creates a typed runtime input. Provide it to a request with `.of(value)`.
+Creates a typed runtime input. Provide it to a request with `.of(value)`. Chain `.module({ ... })` on the param when another package should supply a factory for the same trademark.
 
 ### `.init(value)`
 
@@ -879,25 +871,6 @@ const $region = service("region").param<"us" | "eu">().init("us")
 ```
 
 Sets a default value for a param. Modules that require an initialized param can be requested without supplying it, while callers may still override it with `.of(...)`.
-
-### `.interface<T>()`
-
-```ts
-const $edition = service("edition").interface<Edition | null>()
-```
-
-Declares an interface. Dependents list it in `required`. Fill it with `.implement(...)` and `hire` the implement at the entry-point.
-
-### `.implement({ required?, optionals?, factory, warmup? })`
-
-```ts
-const $editionFromRoute = $edition.implement({
-    required: [$editionId, $db],
-    factory: async ({ editionId, db }) => db.editions.findById(editionId)
-})
-```
-
-Creates a module with the interface's trademark. The factory's return type must extend the interface type.
 
 ### `.module({ required?, optionals?, factory, warmup? })`
 
@@ -940,7 +913,7 @@ Enables cross-request caching after `.module(...)`.
 const supplier = $session.of({ userId: "ada" })
 ```
 
-Creates a supplier for a concrete param or module value. For modules, this bypasses the factory but does not remove the module's declared dependency shape.
+Creates a supplier for a concrete param or module value (`_requested: true`). For modules, this bypasses the factory but does not remove the module's declared dependency shape. Stamped values are serialized into cache keys; factory-resolved modules are not.
 
 ### `.request(suppliers)`
 
@@ -988,7 +961,7 @@ Creates a replacement module with the same trademark and a compatible value type
 const profile = $profile.hire($userMock).request({}).get()
 ```
 
-Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks. If the graph `required`s an interface, `hire()` type-errors until an implement of that trademark is included.
+Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks. If the graph `required`s a param, `hire()` type-errors until a same-trademark module is included (or the param is stamped with `.of(...)`).
 
 ### `ctx(service)`
 
@@ -1004,18 +977,23 @@ Creates a nested request scope from inside a factory so another module can be re
 
 ```ts
 const value = supplier.get()
+// Awaited team — one Promise of the unwrapped `_type`
+const value = await supplier.get()
 ```
 
-Reads the supplier's value. If the factory returns a promise, `get()` returns that promise.
+Reads the supplier's value. On an awaited team (the module or a teammate has `awaited: true` / `_awaited`), `get()` returns `Promise<Awaited<_type>>` — never a nested `Promise<Promise<…>>`.
 
 ### `supplier.supplies`
 
 ```ts
+// Sync team
 supplier.supplies.session
-supplier.supplies.profile
+
+// Awaited team — same bag the factory receives after awaiting `_awaited` deps
+const { session, profile } = await supplier.supplies
 ```
 
-Resolved values for the graph, keyed by trademark.
+Resolved values for the graph, keyed by trademark. On awaited teams this is a real `Promise` of the unwrapped bag (shared with the factory runner).
 
 ### `supplier.market`
 

@@ -11,10 +11,14 @@ describe("Runtime Validation", () => {
             expect(supplier.get()).toBe("test")
         })
 
-        it("should create interfaces without factories", () => {
-            const $edition = service("edition").interface<{ id: string }>()
+        it("should create params that can chain .module()", () => {
+            const $edition = service("edition").param<{ id: string }>()
             expect($edition.tm).toBe("edition")
-            expect($edition._interface).toBe(true)
+            expect($edition._param).toBe(true)
+            const $fromDb = $edition.module({
+                factory: () => ({ id: "x" })
+            })
+            expect($fromDb._implementId).toEqual(expect.any(String))
         })
 
         it("should enforce runtime module plan validation", () => {

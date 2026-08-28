@@ -3,7 +3,7 @@ import type {
     RegistryRecord,
     UnknownModule
 } from "#types/public"
-import { isInterface, isModule } from "#utils"
+import { wasRequested } from "#utils"
 import { assertCachingConfig } from "#validation"
 
 /**
@@ -45,19 +45,14 @@ export function buildCacheKey(
                     registration()
                 :   registration
 
-            // Params serialize into the key. Modules and interfaces contribute
-            // identity (tm + implement id + version) — never the value, even
-            // when the interface was stamped with .of().
-            if (
-                isModule(supplier.service) ||
-                isInterface(supplier.service)
-            ) {
-                return moduleId(supplier.service)
+            // Stamped / requested values (`.of(...)`, including init defaults)
+            // enter the key via the serializer. Factory-resolved modules
+            // contribute identity only — their inputs are already keyed.
+            if (wasRequested(supplier)) {
+                return `${member.tm}:${module._caching.serializer(supplier.get())}`
             }
 
-            if (typeof registration === "function") return undefined
-
-            return `${member.tm}:${module._caching.serializer(supplier.get())}`
+            return moduleId(supplier.service)
         })
         .filter((part) => part !== undefined)
 

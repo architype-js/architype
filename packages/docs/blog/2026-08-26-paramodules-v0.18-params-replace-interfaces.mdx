@@ -1,0 +1,111 @@
+---
+title: "paramodules v0.18: awaited modules (and params replace interfaces)"
+slug: paramodules-v0.18-params-replace-interfaces
+authors:
+    - name: Félix Dubé
+      title: "@someone635"
+      url: https://github.com/someone635
+hide_table_of_contents: false
+---
+
+Version 0.18 adds **`awaited: true`**: async factories keep `_type` as `T`, and dependents receive the awaited value. It also **removes interfaces** — dependency inversion is just **params** plus **`.module()` on that param**.
+
+{/* truncate */}
+
+## Awaited modules
+
+Filling a sync param with an async factory used to push `Promise<T>` into `_type` (or fail the type check). That forced every dependent to treat the leaf as a Promise — awkward when the shared param is typed as `T`.
+
+**`awaited: true`** means: the factory may return `Promise<T>`, but `_type` stays **`T`**. The runner awaits that module before dependents see it.
+
+```ts
+const $edition = service("edition").module({
+    awaited: true,
+    required: [$editionId, $db],
+    factory: async ({ editionId, db }) => db.editions.findById(editionId)
+})
+
+const $title = service("title").module({
+    required: [$edition],
+    factory: ({ edition }) => edition.id // plain T, not Promise<T>
+})
+
+const titleSupply = $title.request(index($editionId.of(id)))
+const title = await titleSupply.get() // Notice .get() returns a promise even if $title's factory is sync -> because it depends on async $editionFromDb.
+const edition = (await titleSupply.supplies).edition // supplies bag also becomes async, but edition in the supply bag is sync.
+```
+
+## Params replace interfaces
+
+v0.17 added `.interface()` / `.implement()` so a shared package could `required` a concept the app owns without importing the app. That solved the cycle — and introduced a third kind of service next to params and modules.
+
+In practice the use case collapsed:
+
+- Shared “open slots” were typed the same way as params.
+- Filling them meant either `.of(value)` or hiring a same-trademark module.
+- Cache rules for interfaces were a special case (stamp without serializing the value) that duplicated what modules already did for factory identity.
+
+So interfaces were a convoluted way to spell **a param you can also implement as a module**.
+
+**Two primitives.** A **param** is an open input. A **module** has a factory. You can chain them on the same trademark:
+
+```ts
+// shared — open slot + dependents
+const $user = service("user").param<{
+    id: string
+    name: string
+} | null>()
+
+const $greeting = service("greeting").module({
+    required: [$user],
+    factory: ({ user }) => {
+        if (!user) return "Hello"
+        return `Hello, ${user.name}`
+    }
+})
+
+// app — fill with a factory
+const $userFromDb = $user.module({
+    awaited: true,
+    required: [$userId, $db],
+    factory: async ({ userId, db }) => db.users.findById(userId)
+})
+
+await $app
+    .hire($userFromDb)
+    .request(index($userId.of(id)))
+    .get()
+
+// or stamp a value you already have
+$app.request(index($user.of(row))).get()
+```
+
+No `.interface()`. No `.implement()`. Same trademark; `hire` or `.of` at the entry-point.
+
+## Cache keys got simpler
+
+The cache key no longer asks “param vs module vs interface”. It asks whether the supplier was **stamped**:
+
+- **Stamped** (`.of(...)`, including `.init()` soft-fills) → `tm:serializer(value)` enters the key.
+- **Factory-resolved** (including hired modules / mocks) → identity only (`tm` + `_implementId` + `_version`).
+
+So if you already have the row, stamp it and the value participates in the key. If the app should load it, hire `$user.module(...)` and the factory’s inputs discriminate the cache instead.
+
+Your serializer should reject values it cannot handle — there is no “stamp but omit from key” escape hatch.
+
+## Migration from v0.17
+
+| v0.17                         | v0.18                                                                                     |
+| ----------------------------- | ----------------------------------------------------------------------------------------- |
+| `service("x").interface<T>()` | `service("x").param<T>()`                                                                 |
+| `$x.implement({ ... })`       | `$x.module({ awaited: true, ... })` when the factory is async and `_type` should stay `T` |
+| `hire($implement)`            | `hire($module)` (unchanged shape)                                                         |
+| `$xInterface.of(value)`       | `$x.of(value)`                                                                            |
+
+Delete every `$…Interface` rename if you only kept it to mark the old API. Shared packages export the param; app packages chain `.module({ ... })` and hire at the entry-point.
+
+## What stayed the same
+
+Params, modules, `mock` / `hire`, `ctx`, caching adapters, and request graphs work as before. TypeScript still requires open params at `.request()`; omitted params soft-fill from `.init()` or `undefined`, and factories fail if they touch a missing value — same as pre-interface params.
+
+See [awaited modules](https://www.npmjs.com/package/paramodules#awaited-modules) and [params for dependency inversion](https://www.npmjs.com/package/paramodules#params-for-dependency-inversion) in the README for the full API.

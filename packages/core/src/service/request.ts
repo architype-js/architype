@@ -7,9 +7,9 @@ import type {
 import type { MarketRecord, RegistryRecord } from "#types/records"
 import {
     wasRequested,
-    isInterface,
     isModule,
     isModuleSupplier,
+    isParam,
     once
 } from "#utils"
 import { assertPlainObject } from "#validation"
@@ -66,12 +66,9 @@ export function request<THIS extends UnknownModule>(
             registry[service.tm] = once(() => service._resolve(registry))
             continue
         }
-        if (isInterface(service)) {
-            throw new Error(
-                `Missing "${service.tm}". Pass .of(...) or hire an implement.`
-            )
+        if (isParam(service)) {
+            registry[service.tm] = service.of(service._init)
         }
-        registry[service.tm] = service.of(service._init)
     }
 
     const supplier = this._resolve(registry)
@@ -85,8 +82,8 @@ function warmup(supplier: ModuleSupplier<UnknownModule>) {
     for (const member of supplier.service._team) {
         // If warmup fails, we don't want to break the entire supply chain
         // The error will be thrown again when the dependency is actually needed
-        Promise.resolve()
-            .then(() => supplier.supplies[member.tm])
+        Promise.resolve(supplier.supplies)
+            .then((bag) => (bag as Record<string, unknown>)[member.tm])
             .catch(() => {
                 // Silently catch errors during warmup
                 // The error will be thrown again when the dependency is actually accessed
