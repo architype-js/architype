@@ -152,21 +152,23 @@ Factories can be `async`, and you write them plainly with `async` and `await`. T
 const $profile = service("profile").module({
     required: [$session, $db],
     factory: async ({ session, db }) =>
-        await db.profiles.findByUserId(session.userId)
+        await db.profiles.findByUserId(session.userId),
+    awaited: true // This makes the type of this module Profile instead of Promise<Profile>
 })
 
 const $notifications = service("notifications").module({
     required: [$session, $db],
     factory: async ({ session, db }) =>
-        await db.notifications.findForUser(session.userId)
+        await db.notifications.findForUser(session.userId),
+    awaited: true // This makes the type of this module Notification instead of Promise<Notification>
 })
 
 const $dashboard = service("dashboard").module({
     required: [$profile, $notifications],
-    factory: async ({ profile, notifications }) => {
+    factory: ({ profile, notifications }) => {
         return {
-            profile: await profile,
-            notifications: await notifications
+            profile,
+            notifications
         }
     }
 })
@@ -175,10 +177,6 @@ const dashboard = await $dashboard.request(index($session.of(session))).get()
 ```
 
 `$profile` and `$notifications` both need `$session` and `$db`, but they do not need each other. Requesting `$dashboard` kicks off $dashboard, $notifications and $profile factories all in parallel and in the background.
-
-Without `awaited: true`, an async factory still infers `_type` as `Promise<T>`, so dependents see promises and `await` them as above. Prefer [`awaited: true`](#awaited-modules) when you want `_type` to stay `T` and the runner to unwrap deps before factories run.
-
-That eager background resolution is the default, but you can control it per factory.
 
 Make the loading **lazy** by returning functions from factories.
 
@@ -238,38 +236,7 @@ const $dashboard = service("dashboard").module({
 })
 ```
 
-Now profile and notifications are still loaded eagerly, but you can toggle easily just by removing or commenting out their warmup function. You don't need to refactor all dependent call sites from **await value** to **await value()** when you toggle, they stay as **await value()**
-
-### Awaited modules
-
-Pass `awaited: true` when a factory returns `Promise<T>` but the module’s `_type` should stay **`T`**. The runner awaits that module (and every `_awaited` supply in the bag) before dependents run, so other factories receive the unwrapped value — not a Promise.
-
-```ts
-const $edition = service("edition").param<{ id: string }>()
-
-const $editionFromDb = $edition.module({
-    awaited: true,
-    required: [$editionId, $db],
-    factory: async ({ editionId, db }) => db.editions.findById(editionId)
-})
-
-const $title = service("title").module({
-    required: [$editionFromDb],
-    factory: ({ edition }) => {
-        // `edition` is `{ id: string }`, not `Promise<{ id: string }>`
-        return edition.id
-    }
-})
-
-const title = await $title.request(index($editionId.of(id))).get()
-```
-
-What that means in practice:
-
-- **`_type` stays `T`.** Without `awaited: true`, an async factory on a sync param is a type error (or a standalone `service().module({ factory: async … })` infers `_type` as `Promise<T>`).
-- **Dependents stay sync.** Factories that `required` an `_awaited` module see `T` in their supplies. No `await edition` inside every consumer.
-- **`.get()` is one Promise.** Any module whose team includes an `_awaited` member has `.get()` typed as `Promise<Awaited<_type>>` — never `Promise<Promise<T>>`, even if the factory itself is `async`.
-- **`supplier.supplies` matches the factory bag.** On an awaited team it is `Promise<{ … }>` of those same unwrapped values: `const { edition } = await supplier.supplies`.
+Now profile and notifications are still loaded eagerly, but you can toggle easily just by removing or commenting out their warmup function. You don't need to refactor all dependent call sites from **value** to **await value()** when you toggle, they stay as **await value()**
 
 ### Cache Invalidation Cascades
 
@@ -608,6 +575,37 @@ app.addTodo("write README")
 ```
 
 `$todos` can be created once during provisioning. `$session` remains open and is provided at request-time, so $addTodo must wait request-time to run.
+
+### Awaited modules
+
+Pass `awaited: true` when a factory returns `Promise<T>` but the module’s `_type` should stay **`T`**. The runner awaits that module (and every `_awaited` supply in the bag) before dependents run, so other factories receive the unwrapped value — not a Promise.
+
+```ts
+const $edition = service("edition").param<{ id: string }>()
+
+const $editionFromDb = $edition.module({
+    awaited: true,
+    required: [$editionId, $db],
+    factory: async ({ editionId, db }) => db.editions.findById(editionId)
+})
+
+const $title = service("title").module({
+    required: [$editionFromDb],
+    factory: ({ edition }) => {
+        // `edition` is `{ id: string }`, not `Promise<{ id: string }>`
+        return edition.id
+    }
+})
+
+const title = await $title.request(index($editionId.of(id))).get()
+```
+
+What that means in practice:
+
+- **`_type` becomes `T` instead of `Promise<T>`.**
+- **Dependents stay sync.** Factories that require an awaited module see `T` in their supplies.
+- **`.get()` stays a Promise.** Any module whose team includes an awaited module has `.get()` typed as `Promise<Awaited<_type>>`.
+- **`.supplies` becomes a Promise.**
 
 ### Caching
 
