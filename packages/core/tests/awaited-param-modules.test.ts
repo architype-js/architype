@@ -190,6 +190,24 @@ describe("awaited: true on param.module()", () => {
         expect(await supplier.get()).toBe("ok:ok")
     })
 
+    it("accepts a stamp of an awaited required module", async () => {
+        const $leaf = service("leaf").module({
+            awaited: true,
+            factory: async (): Promise<string> => {
+                throw new Error("factory should not run")
+            }
+        })
+
+        const $title = service("title").module({
+            required: [$leaf],
+            factory: ({ leaf }) => leaf.toUpperCase()
+        })
+
+        const supplier = $title.request(index($leaf.of("stamped")))
+        expectTypeOf(supplier.get).returns.toEqualTypeOf<Promise<string>>()
+        expect(await supplier.get()).toBe("STAMPED")
+    })
+
     it("keeps sync supplies as a plain bag when the team is sync", () => {
         const $name = service("name").param<string>()
 

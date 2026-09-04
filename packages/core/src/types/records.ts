@@ -80,7 +80,8 @@ type RequestBase<
                 OPTIONAL["_caller"],
                 Partial<MarketRecord<UnknownService>>,
                 OPTIONAL["_hired"],
-                OPTIONAL["_mock"]
+                OPTIONAL["_mock"],
+                OPTIONAL["_awaited"]
             >
         >
     :   never
