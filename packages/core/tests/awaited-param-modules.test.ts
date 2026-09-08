@@ -5,14 +5,6 @@ describe("awaited: true on param.module()", () => {
     it("awaits an async param implement before a sync dependent factory", async () => {
         const $edition = service("edition").param<{ id: string }>()
 
-        const $title = service("title").module({
-            required: [$edition],
-            factory: ({ edition }) => {
-                expect(edition).toEqual({ id: "daily-today" })
-                return edition.id
-            }
-        })
-
         const $fromDb = $edition.module({
             awaited: true,
             factory: async () => {
@@ -21,7 +13,15 @@ describe("awaited: true on param.module()", () => {
             }
         })
 
-        const result = $title.hire($fromDb).request({}).get()
+        const $title = service("title").module({
+            required: [$fromDb],
+            factory: ({ edition }) => {
+                expect(edition).toEqual({ id: "daily-today" })
+                return edition.id
+            }
+        })
+
+        const result = $title.request({}).get()
         expect(result).toBeInstanceOf(Promise)
         expect(await result).toBe("daily-today")
     })
@@ -50,17 +50,17 @@ describe("awaited: true on param.module()", () => {
     it("types .get() as Promise when the team includes an awaited: true module", () => {
         const $edition = service("edition").param<{ id: string }>()
 
-        const $title = service("title").module({
-            required: [$edition],
-            factory: ({ edition }) => edition.id
-        })
-
         const $fromDb = $edition.module({
             awaited: true,
             factory: async () => ({ id: "daily-today" })
         })
 
-        const supplier = $title.hire($fromDb).request({})
+        const $title = service("title").module({
+            required: [$fromDb],
+            factory: ({ edition }) => edition.id
+        })
+
+        const supplier = $title.request({})
         expectTypeOf(supplier.get).returns.toEqualTypeOf<Promise<string>>()
     })
 

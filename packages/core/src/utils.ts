@@ -28,12 +28,18 @@ export function once<F extends () => any>(fn: F): F {
     } as F
 }
 
-export function dedupe(services: UnknownService[]) {
+export function dedupe(services: UnknownService[], owner?: string) {
     const deduped: Record<string, UnknownService> = {}
     for (const service of services) {
         const existing = deduped[service.tm]
-        // A hired module fills a param; a later transitive param must not reopen it.
-        if (existing && isModule(existing) && !isModule(service)) continue
+        // One trademark, one form. A module filling a param slot leaves every
+        // param-declaring dependent with a frozen `_awaited` gate, so an awaited
+        // implement reaches a sync factory as an un-awaited Promise.
+        if (existing && isModule(existing) !== isModule(service)) {
+            throw new Error(
+                `${owner ? `${owner}: ` : ""}trademark "${service.tm}" is a param in one dependency and a module in another. Fill a param with a stamped value (.of()); fill a module by declaring it.`
+            )
+        }
         deduped[service.tm] = service
     }
     return Object.values(deduped)

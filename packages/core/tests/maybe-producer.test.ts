@@ -25,34 +25,40 @@ describe("maybe: true", () => {
 
     it("types a required supply as T and throws if the maybe implement misses", () => {
         const $card = service("card").param<{ id: string }>()
-        const $title = service("title").module({
-            required: [$card],
-            factory: ({ card }) => {
-                expectTypeOf(card).toEqualTypeOf<{ id: string }>()
-                return card.id
-            }
-        })
 
         const $fromDb = $card.module({
             maybe: true,
             factory: () => undefined as { id: string } | undefined
         })
 
-        const hired = $title.hire($fromDb)
-        expectTypeOf(hired.request({})).not.toEqualTypeOf<never>()
-        expect(() => hired.request({}).get()).toThrow(
+        const $title = service("title").module({
+            required: [$fromDb],
+            factory: ({ card }) => {
+                expectTypeOf(card).toEqualTypeOf<{ id: string }>()
+                return card.id
+            }
+        })
+
+        expectTypeOf($title.request({})).not.toEqualTypeOf<never>()
+        expect(() => $title.request({}).get()).toThrow(
             "Dependency card is not available"
         )
 
         expect(
-            hired.request(index($fromDb.of({ id: "stamped" }))).get()
+            $title.request(index($fromDb.of({ id: "stamped" }))).get()
         ).toBe("stamped")
     })
 
     it("lets an optional consumer see undefined from a maybe implement", () => {
         const $card = service("card").param<{ id: string }>()
+
+        const $fromDb = $card.module({
+            maybe: true,
+            factory: () => undefined as { id: string } | undefined
+        })
+
         const $title = service("title").module({
-            optionals: [$card],
+            optionals: [$fromDb],
             factory: ({ card }) => {
                 expectTypeOf(card).toEqualTypeOf<
                     { id: string } | undefined
@@ -61,12 +67,7 @@ describe("maybe: true", () => {
             }
         })
 
-        const $fromDb = $card.module({
-            maybe: true,
-            factory: () => undefined as { id: string } | undefined
-        })
-
-        expect($title.hire($fromDb).request({}).get()).toBe("none")
+        expect($title.request({}).get()).toBe("none")
     })
 
     it("keeps _type as T when an awaited implement may miss", async () => {
@@ -84,39 +85,39 @@ describe("maybe: true", () => {
         })
 
         const $title = service("title").module({
-            required: [$card],
+            required: [$fromDb],
             factory: ({ card }) => card.id
         })
 
         expectTypeOf($fromDb._type).toEqualTypeOf<{ id: string }>()
         expectTypeOf($fromDb._maybe).toEqualTypeOf<true>()
 
-        const hired = $title.hire($fromDb)
-        expect(await hired.request(index($cardId.of("known"))).get()).toBe(
+        expect(await $title.request(index($cardId.of("known"))).get()).toBe(
             "known"
         )
         await expect(
-            hired.request(index($cardId.of("missing"))).get()
+            $title.request(index($cardId.of("missing"))).get()
         ).rejects.toThrow("Dependency card is not available")
     })
 
     it("does not mark a definite implement as maybe", () => {
         const $card = service("card").param<{ id: string }>()
-        const $title = service("title").module({
-            required: [$card],
-            factory: ({ card }) => card.id
-        })
 
         const $fromDb = $card.module({
             factory: () => ({ id: "daily" })
         })
 
+        const $title = service("title").module({
+            required: [$fromDb],
+            factory: ({ card }) => card.id
+        })
+
         expectTypeOf($fromDb._maybe).toEqualTypeOf<false>()
         expect($fromDb._maybe).toBe(false)
-        expect($title.hire($fromDb).request({}).get()).toBe("daily")
+        expect($title.request({}).get()).toBe("daily")
     })
 
-    it("does not throw when a guest-safe awaited parent hires a maybe implement and optionals the param", async () => {
+    it("does not throw when a guest-safe awaited parent optionals a maybe implement", async () => {
         const $authUser = service("authUser").param<{ id: string }>()
         const $fromDb = $authUser.module({
             maybe: true,
@@ -124,11 +125,11 @@ describe("maybe: true", () => {
         })
         const $page = service("page").module({
             awaited: true,
-            optionals: [$authUser],
+            optionals: [$fromDb],
             factory: async ({ authUser }) => authUser?.id ?? "guest"
         })
 
-        expect(await $page.hire($fromDb).request({}).get()).toBe("guest")
+        expect(await $page.request({}).get()).toBe("guest")
     })
 
     it("throws when an awaited parent hires a maybe implement without optionals and the factory misses", async () => {
@@ -218,6 +219,11 @@ describe("maybe: true", () => {
             factory: () => undefined as { id: string } | undefined
         })
         const $page = service("page").module({
+            required: [$fromDb],
+            factory: ({ user }) => user?.id ?? "none"
+        })
+
+        const $stampedPage = service("stampedPage").module({
             required: [$user],
             factory: ({ user }) => user?.id ?? "none"
         })
@@ -226,10 +232,12 @@ describe("maybe: true", () => {
             { id: string } | undefined
         >()
         expectTypeOf($fromDb._maybe).toEqualTypeOf<true>()
-        expect(() => $page.hire($fromDb).request({}).get()).toThrow(
+        expect(() => $page.request({}).get()).toThrow(
             "Dependency user is not available"
         )
-        expect($page.request(index($user.of(undefined))).get()).toBe("none")
+        expect(
+            $stampedPage.request(index($user.of(undefined))).get()
+        ).toBe("none")
     })
 
     it("does not throw when a definite implement yields slot-typed undefined", () => {
@@ -238,11 +246,11 @@ describe("maybe: true", () => {
             factory: () => undefined as { id: string } | undefined
         })
         const $page = service("page").module({
-            required: [$user],
+            required: [$fromDb],
             factory: ({ user }) => user?.id ?? "none"
         })
 
         expectTypeOf($fromDb._maybe).toEqualTypeOf<false>()
-        expect($page.hire($fromDb).request({}).get()).toBe("none")
+        expect($page.request({}).get()).toBe("none")
     })
 })

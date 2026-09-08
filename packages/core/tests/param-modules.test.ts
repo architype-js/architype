@@ -17,23 +17,23 @@ describe("param modules (DI)", () => {
         expect($edition._inited).toBe(false)
     })
 
-    it("resolves after hiring a param.module() implement", () => {
+    it("resolves a param.module() implement a dependent declares", () => {
         const $edition = service("edition").param<{ id: string }>()
-
-        const $title = service("title").module({
-            required: [$edition],
-            factory: ({ edition }) => edition.id
-        })
 
         const $fromDb = $edition.module({
             factory: () => ({ id: "daily-today" })
         })
 
+        const $title = service("title").module({
+            required: [$fromDb],
+            factory: ({ edition }) => edition.id
+        })
+
         expect($fromDb._implementId).toEqual(expect.any(String))
-        expect($title.hire($fromDb).request({}).get()).toBe("daily-today")
+        expect($title.request({}).get()).toBe("daily-today")
     })
 
-    it("keeps a hired module when a later hire re-lists the param in its team", () => {
+    it("rejects hiring a param trademark, co-hired module or not", () => {
         const $edition = service("edition").param<{ id: string }>()
 
         const $title = service("title").module({
@@ -54,12 +54,13 @@ describe("param modules (DI)", () => {
             factory: ({ spotBids }) => spotBids[0]
         })
 
-        expect(
-            $title.hire($fromDb, $currentBid).request({}).get()
-        ).toBe("daily-today")
+        expect(() =>
+            // @ts-expect-error - "edition" is a param on this graph
+            $title.hire($fromDb, $currentBid)
+        ).toThrow(/trademark "edition" is a param on this graph/)
     })
 
-    it("type-errors request() until the param is filled with .of() or hire", () => {
+    it("type-errors request() until the param is filled with .of()", () => {
         const $edition = service("edition").param<{ id: string }>()
 
         const $title = service("title").module({
@@ -74,43 +75,51 @@ describe("param modules (DI)", () => {
             $title.request(index($edition.of({ id: "stamped" }))).get()
         ).toBe("stamped")
 
+        // An implement is a module, so a dependent declares it instead.
         const $fromDb = $edition.module({
             factory: () => ({ id: "daily-today" })
         })
 
-        const hired = $title.hire($fromDb)
-        expectTypeOf(hired.request({})).not.toEqualTypeOf<never>()
-        expect(hired.request({}).get()).toBe("daily-today")
+        const $fromDbTitle = service("fromDbTitle").module({
+            required: [$fromDb],
+            factory: ({ edition }) => edition.id
+        })
+
+        expectTypeOf($fromDbTitle.request({})).not.toEqualTypeOf<never>()
+        expect($fromDbTitle.request({}).get()).toBe("daily-today")
     })
 
-    it("lets hire fill one param while request() still requires the rest", () => {
+    it("fills one param by declaring its implement while request() still requires the rest", () => {
         const $edition = service("edition").param<{ id: string }>()
         const $now = service("now").param<() => string>()
-
-        const $fraction = service("fraction").module({
-            required: [$edition, $now],
-            factory: ({ edition, now }) => edition.id + now()
-        })
 
         const $fromDb = $edition.module({
             factory: () => ({ id: "e1" })
         })
 
-        const hired = $fraction.hire($fromDb)
+        const $fraction = service("fraction").module({
+            required: [$fromDb, $now],
+            factory: ({ edition, now }) => edition.id + now()
+        })
 
         // @ts-expect-error - Property 'now' is missing
-        hired.request({})
+        $fraction.request({})
 
-        expect(hired.request(index($now.of(() => "t"))).get()).toBe("e1t")
+        expect($fraction.request(index($now.of(() => "t"))).get()).toBe("e1t")
 
         const $clock = $now.module({
             factory: () => () => "t"
         })
 
-        expect($fraction.hire($fromDb, $clock).request({}).get()).toBe("e1t")
+        const $fixed = service("fixed").module({
+            required: [$fromDb, $clock],
+            factory: ({ edition, now }) => edition.id + now()
+        })
+
+        expect($fixed.request({}).get()).toBe("e1t")
     })
 
-    it("type-errors request() for transitive params required by any hired module", () => {
+    it("type-errors request() for transitive params required by a declared implement", () => {
         const $rangeCursor = service("rangeCursor").param<{ start: string }>()
         const $minBidParam = service("minBid").param<string>()
 
@@ -124,25 +133,22 @@ describe("param modules (DI)", () => {
         })
 
         const $postBid = service("postBid").module({
-            required: [$minBidParam],
+            required: [$minBid, $createPost],
             factory: ({ minBid }) => minBid
         })
 
-        const hired = $postBid.hire($minBid, $createPost)
-
         // @ts-expect-error - Property 'rangeCursor' is missing
-        hired.request({})
+        $postBid.request({})
 
         expect(
-            hired.request(index($rangeCursor.of({ start: "s" }))).get()
+            $postBid.request(index($rangeCursor.of({ start: "s" }))).get()
         ).toBe("s")
     })
 
     it("accumulates open params across chained hire() calls", () => {
         const $rangeCursor = service("rangeCursor").param<{ start: string }>()
-        const $minBidParam = service("minBid").param<string>()
 
-        const $minBid = $minBidParam.module({
+        const $minBid = service("minBid").module({
             required: [$rangeCursor],
             factory: ({ rangeCursor }) => rangeCursor.start
         })
@@ -152,7 +158,7 @@ describe("param modules (DI)", () => {
         })
 
         const $postBid = service("postBid").module({
-            required: [$minBidParam],
+            required: [$minBid],
             factory: ({ minBid }) => minBid
         })
 
@@ -165,14 +171,19 @@ describe("param modules (DI)", () => {
             chained.request(index($rangeCursor.of({ start: "s" }))).get()
         ).toBe("s")
 
+        // A param slot takes a value: resolve an implement on its own graph.
         const $fromRoute = $rangeCursor.module({
             factory: () => ({ start: "route" })
         })
 
-        expect(chained.hire($fromRoute).request({}).get()).toBe("route")
+        expect(
+            chained
+                .request(index($rangeCursor.of($fromRoute.request({}).get())))
+                .get()
+        ).toBe("route")
     })
 
-    it("wires a shared module through a hired next module at the entry-point", () => {
+    it("wires a shared module into a param slot by stamping at the entry-point", () => {
         const $edition = service("edition").param<{
             start: string
             end: string
@@ -204,7 +215,8 @@ describe("param modules (DI)", () => {
             })
         })
 
-        expect($page.hire($editionFromRoute).request({}).get()).toBe(0.5)
+        const edition = $editionFromRoute.request({}).get()
+        expect($page.request(index($edition.of(edition))).get()).toBe(0.5)
     })
 
     it("does not serialize factory-resolved module values into cache keys", () => {
@@ -228,13 +240,13 @@ describe("param modules (DI)", () => {
 
         const $cached = service("cachedWithNow")
             .module({
-                required: [$now],
+                required: [$clock],
                 factory: leafFactory
             })
             .caching(caching)
 
-        const first = $cached.hire($clock).request({}).get()
-        const second = $cached.hire($clock).request({}).get()
+        const first = $cached.request({}).get()
+        const second = $cached.request({}).get()
 
         expect(second).toBe(first)
         expect(leafFactory).toHaveBeenCalledTimes(1)
@@ -272,13 +284,15 @@ describe("param modules (DI)", () => {
         expect(serializerFn).toHaveBeenCalled()
     })
 
-    it("keys cache entries by hired module identity, not the param declaration", () => {
-        const $edition = service("edition").param<{ id: string }>()
+    it("keys cache entries by hired module identity", () => {
+        const $edition = service("edition").module({
+            factory: () => ({ id: "declared" })
+        })
 
-        const $fromA = $edition.module({
+        const $fromA = $edition.mock({
             factory: () => ({ id: "a" })
         })
-        const $fromB = $edition.module({
+        const $fromB = $edition.mock({
             factory: () => ({ id: "b" })
         })
 
@@ -321,12 +335,12 @@ describe("param modules (DI)", () => {
 
         const $cached = service("cachedMockedEdition")
             .module({
-                required: [$edition],
+                required: [$fromDb],
                 factory
             })
             .caching(valueCaching)
 
-        const first = $cached.hire($fromDb).request({}).get()
+        const first = $cached.request({}).get()
         const second = $cached.hire($mocked).request({}).get()
 
         expect(second).not.toBe(first)
@@ -352,13 +366,13 @@ describe("param modules (DI)", () => {
 
         const $root = service("rootWithEdition")
             .module({
-                required: [$edition],
+                required: [$fromDb],
                 factory: rootFactory
             })
             .caching(valueCaching)
 
-        const first = $root.hire($fromDb).request({}).get()
-        const second = $root.hire($fromDb).request({}).get()
+        const first = $root.request({}).get()
+        const second = $root.request({}).get()
 
         expect(second).toBe(first)
         expect(fromDbFactory).toHaveBeenCalledTimes(1)
@@ -366,7 +380,7 @@ describe("param modules (DI)", () => {
 
         $fromDb.invalidate()
 
-        const third = $root.hire($fromDb).request({}).get()
+        const third = $root.request({}).get()
         expect(third).not.toBe(first)
         expect(fromDbFactory).toHaveBeenCalledTimes(2)
         expect(rootFactory).toHaveBeenCalledTimes(2)
@@ -382,15 +396,12 @@ describe("param modules (DI)", () => {
         })
 
         const $title = service("title").module({
-            required: [$edition],
+            required: [$fromId],
             factory: ({ edition }) => edition.id
         })
 
         expect(
-            $title
-                .hire($fromId)
-                .request(index($editionId.of("daily-today")))
-                .get()
+            $title.request(index($editionId.of("daily-today"))).get()
         ).toBe("daily-today")
     })
 
@@ -403,7 +414,12 @@ describe("param modules (DI)", () => {
         })
 
         const $fromDb = $edition.module({
-            factory: () => ({ id: "hired" })
+            factory: () => ({ id: "declared" })
+        })
+
+        const $fromDbTitle = service("fromDbTitle").module({
+            required: [$fromDb],
+            factory: ({ edition }) => edition.id
         })
 
         const $page = service("page").module({
@@ -428,13 +444,15 @@ describe("param modules (DI)", () => {
         })
         expect($stamped.request({}).get()).toBe("nested")
 
-        const $hired = service("hiredPage").module({
-            factory: (_, ctx) => ctx($title).hire($fromDb).request({}).get()
+        // A nested request needs no stamp when the module it requests declares
+        // the implement itself.
+        const $declared = service("declaredPage").module({
+            factory: (_, ctx) => ctx($fromDbTitle).request({}).get()
         })
-        expect($hired.request({}).get()).toBe("hired")
+        expect($declared.request({}).get()).toBe("declared")
     })
 
-    it("nested hire does not re-require params the parent already has", () => {
+    it("nested request does not re-require params the parent already has", () => {
         const $edition = service("edition").param<{ id: string }>()
         const $spotId = service("spotId").param<string>()
         const $priorValue = service("priorValue").param<string>()
@@ -450,27 +468,27 @@ describe("param modules (DI)", () => {
         })
 
         const $spot = service("spot").module({
-            required: [$spotId, $priorValue],
+            required: [$spotId, $fromSpot],
             factory: ({ spotId, priorValue }) => `${spotId}:${priorValue}`
         })
 
         const $section = service("section").module({
             required: [$date],
             factory: ({ date }, ctx) =>
-                `${date}/${ctx($spot)
-                    .hire($fromSpot)
-                    .request(index($spotId.of("s1")))
-                    .get()}`
+                `${date}/${ctx($spot).request(index($spotId.of("s1"))).get()}`
         })
 
         const $fromDb = $edition.module({
             factory: () => ({ id: "e1" })
         })
 
-        expect($section.hire($fromDb).request({}).get()).toBe("e1/s1:e1")
+        const edition = $fromDb.request({}).get()
+        expect($section.request(index($edition.of(edition))).get()).toBe(
+            "e1/s1:e1"
+        )
     })
 
-    it("lets nested ctx requests inherit the parent's hired module", () => {
+    it("lets nested ctx requests inherit the parent's stamped fill", () => {
         const $edition = service("edition").param<{ id: string }>()
         const $editionId = service("editionId").param<string>()
 
@@ -490,12 +508,13 @@ describe("param modules (DI)", () => {
                 `${title}/${ctx($title).request(index()).get()}`
         })
 
-        expect(
-            $page
-                .hire($fromId)
-                .request(index($editionId.of("daily-today")))
-                .get()
-        ).toBe("daily-today/daily-today")
+        const edition = $fromId
+            .request(index($editionId.of("daily-today")))
+            .get()
+
+        expect($page.request(index($edition.of(edition))).get()).toBe(
+            "daily-today/daily-today"
+        )
     })
 
     it("rejects param.module plans whose value type does not extend the param", () => {

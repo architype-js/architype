@@ -34,6 +34,8 @@ _Avoid_: Stamp undefined (when it is not in the slot type), omit (as a second ve
 
 **Hire**:
 Put a producer on this request’s graph. Hire does not stamp a slot whose producer can miss.
+Modules only: a trademark this graph holds as a param takes a stamp, never a hire.
+A trademark is a param or a module in one graph, never both (see ADR 0004).
 _Avoid_: Implement (that is declaring the factory), inject, provide
 
 **Implement**:

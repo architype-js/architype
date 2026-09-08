@@ -26,9 +26,10 @@ export interface Param<
         value: THIS["_type"]
     ) => Param<THIS["tm"], THIS["_type"], THIS["_type"]>
     /**
-     * Creates a module that fills this param (same trademark). Hire it at the
-     * request entry-point so dependents that `required` the param receive this
-     * implementation.
+     * Creates a module sharing this param's trademark and type. Dependents
+     * `required` (or `optionals`) the module to consume it — a param slot is
+     * filled by a stamped value, never by hiring this module onto it. Stamp
+     * this module's resolved value to carry it into a graph built on the param.
      *
      * Pass `awaited: true` when the factory returns `Promise<T>` but the param
      * (and module `_type`) stay `T`. Pass `maybe: true` when the factory

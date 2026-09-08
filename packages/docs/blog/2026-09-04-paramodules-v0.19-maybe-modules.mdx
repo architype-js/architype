@@ -1,5 +1,5 @@
 ---
-title: "paramodules v0.19: maybe values"
+title: "paramodules v0.19: maybe values (and one form per trademark)"
 slug: paramodules-v0.19-maybe-values
 authors:
     - name: Félix Dubé
@@ -9,6 +9,8 @@ hide_table_of_contents: false
 ---
 
 Version 0.19 adds **`maybe: true`**: a **factory** may return **`T | undefined`** while the module’s `_type` stays **`T`**. The runner throws only if the factory **reading** that trademark `required` it **and** the value is a miss — the same division of labour as `awaited: true` unwrapping a promise. `.of()` stays a definite stamp of the slot type. There is no maybe param.
+
+It also enforces **one form per trademark** in a graph: a trademark is a param or a module, never both. `hire` only replaces or adds modules. A param slot takes a stamped value.
 
 {/* truncate */}
 
@@ -39,27 +41,40 @@ A factory is one function; it cannot see `T` on one request and `undefined` on t
 
 ```ts
 const $title = service("title").module({
-    required: [$card],
+    required: [$cardFromDb],
     factory: ({ card }) => card.id // `{ id: string }`, no optional chaining
 })
 ```
 
-If a **maybe** implement’s factory returns `undefined`, the runner throws `Dependency card is not available` when **this** factory reads it. The factory never receives the hole. An empty slot (no supplier) is the same miss.
+If a **maybe** module’s factory returns `undefined`, the runner throws `Dependency card is not available` when **this** factory reads it. The factory never receives the hole. An empty slot (no supplier) is the same miss.
 
 That is not every `undefined`. `param<T | undefined>().of(undefined)` is a value of the slot; a required reader sees it and does not throw. You can still put `maybe: true` on an implement of that param: the factory miss throws; the stamp does not.
 
-When absence is legitimate, say so with `optionals` — the same param, on a module that can run without it:
+When absence is legitimate, say so with `optionals` — the same maybe module, on a factory that can run without it:
 
 ```ts
 const $preview = service("preview").module({
-    optionals: [$card],
+    optionals: [$cardFromDb],
     factory: ({ card }) => card?.id ?? "none" // `{ id: string } | undefined`
 })
 ```
 
-Hire of `$cardFromDb` onto `$preview` does **not** throw. After hire the trademark sits in both `_required` (the hired module) and `_optionals` (the original param); the runner treats that as optional.
+Hiring a maybe module onto a graph that already `optional`s that trademark keeps it optional. A miss still flows as `undefined`. Putting that hire in `_required` would throw on the same miss, which is why hire now mirrors the list it replaces.
 
 `required` versus `optionals` is the only place a graph decides whether absence is acceptable. It is not encoded in the param’s type, and a maybe module does not throw just because its factory returned `undefined`. A maybe module may itself sit in `optionals` — it auto-wires, the factory sees `T | undefined`, and a miss does not throw. Definite modules stay in `required`.
+
+## One form per trademark
+
+A trademark is a param or a module in any one graph, never both. A module that `required`s `$cardFromDb` next to one that `required`s the `$card` **param** is a type error — `MixedFormError<"card">`. Hiring `$cardFromDb` onto a graph that holds `card` as a param is the same error at `.hire()` (`HiredParamError<"card">`) and throws at runtime.
+
+v0.18 let `dedupe` give the slot to the module and drop the param. That silently broke `awaited: true`: a dependent that declared the param froze a sync `_awaited` gate, then received the implement’s un-awaited `Promise`. `user.id` was `undefined`.
+
+Params are filled by `.of()`. Modules are declared or hired. `$param.module()` borrows the param’s trademark and type; dependents `required` (or `optionals`) **that module**. To carry its value into a graph built on the param, resolve it and stamp:
+
+```ts
+const card = await $cardFromDb.request(index($cardId.of(id))).get()
+const preview = $previewOnParam.request(index($card.of(card))).get()
+```
 
 ## Migration from v0.18
 
@@ -68,6 +83,7 @@ Hire of `$cardFromDb` onto `$preview` does **not** throw. After hire the tradema
 | `param<Card \| undefined>()` so one factory can cope | `param<Card>()` + `maybe: true` on the loader + `optionals: [$card]` on that factory |
 | Loader `throw`s on miss to satisfy `_type`           | Loader returns `T \| undefined`; the runner throws for `required` readers only     |
 | Guest auth ternary at every entry-point              | unchanged — `index(user ? $authUser.of(user) : undefined)`                         |
+| `$page.hire($cardFromDb)` while dependents `required` the `$card` param | Dependents `required` `$cardFromDb`, or resolve it and stamp `$card.of(card)`      |
 
 Without `maybe: true`, a factory that returns `T | undefined` is still a type error.
 
@@ -75,6 +91,8 @@ If you cache a module with omitted optionals, expect one cold miss after upgradi
 
 ## What stayed the same
 
-Params, `.of()`, `mock` / `hire`, `ctx`, `awaited: true`, caching adapters, and request graphs are unchanged. `.request({})` is still a type error when a required key is genuinely absent, `.init(default)` still makes a required param omittable, and `{ [tm]: undefined }` in a nested `ctx` request still erases what the parent supplied.
+`.of()`, `ctx`, `awaited: true`, caching adapters, and request graphs are unchanged. `.request({})` is still a type error when a required key is genuinely absent, `.init(default)` still makes a required param omittable, and `{ [tm]: undefined }` in a nested `ctx` request still erases what the parent supplied.
+
+`hire` still swaps **modules**. It no longer fills a param slot.
 
 See [maybe values](https://www.npmjs.com/package/paramodules#maybe-values) in the README for the full API.

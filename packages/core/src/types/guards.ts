@@ -66,6 +66,65 @@ export type CircularModuleError = {
 }
 
 /**
+ * Union of `_reqType` keys whose `.service` is this form.
+ * A param slot's service is a `Param`; everything else is a module.
+ */
+type RequestTrademarksInForm<
+    REQUEST extends Record<PropertyKey, { service: unknown } | undefined>,
+    FORM extends "param" | "module"
+> = {
+    [NAME in keyof REQUEST]-?: NAME extends string ?
+        NonNullable<REQUEST[NAME]>["service"] extends Param ?
+            FORM extends "param" ?
+                NAME
+            :   never
+        : FORM extends "module" ? NAME
+        : never
+    :   never
+}[keyof REQUEST]
+
+/**
+ * Trademarks a plan's services contribute in one form. A dependency's own
+ * plan guard already rejected a mix inside its subtree, so one level of
+ * `_reqType` is enough to see every form reaching this plan.
+ */
+type PlanTrademarksInForm<
+    SERVICES extends UnknownService[],
+    FORM extends "param" | "module"
+> =
+    any[] extends SERVICES ? never
+    : SERVICES extends (
+        [infer S extends UnknownService, ...infer REST extends UnknownService[]]
+    ) ?
+        | (string extends S["tm"] ? never
+          : S extends UnknownModule ?
+              | (FORM extends "module" ? S["tm"] : never)
+              | (string extends keyof S["_reqType"] ? never
+                :   RequestTrademarksInForm<S["_reqType"], FORM>)
+          : FORM extends "param" ? S["tm"]
+          : never)
+        | PlanTrademarksInForm<REST, FORM>
+    :   never
+
+/** Trademarks this plan declares as a param and as a module at once. */
+type PlanMixedTrademark<
+    REQUIRED extends OriginalService[],
+    OPTIONALS extends OptionalService[],
+    SERVICES extends UnknownService[] = [...REQUIRED, ...OPTIONALS]
+> = Extract<
+    PlanTrademarksInForm<SERVICES, "param">,
+    PlanTrademarksInForm<SERVICES, "module">
+>
+
+export type MixedFormError<TM extends string = string> = {
+    ERROR: `Trademark "${TM}" is a param in one dependency and a module in another`
+}
+
+export type HiredParamError<TM extends string = string> = {
+    ERROR: `Trademark "${TM}" is a param: fill it with .of(), hire only modules`
+}
+
+/**
  * Valid plan argument for `module()` / `mock()`. Invalid plans become error types.
  * @public
  */
@@ -80,7 +139,9 @@ export type ModulePlanGuard<
     PlanHasDuplicate<REQUIRED, OPTIONALS> extends true ? DuplicateServiceError
     : TeamHasCircular<TM, REQUIRED, OPTIONALS> extends true ?
         CircularModuleError
-    :   PartialModulePlan<TYPE, REQUIRED, OPTIONALS, AWAITED, MAYBE>
+    : [PlanMixedTrademark<REQUIRED, OPTIONALS>] extends [never] ?
+        PartialModulePlan<TYPE, REQUIRED, OPTIONALS, AWAITED, MAYBE>
+    :   MixedFormError<PlanMixedTrademark<REQUIRED, OPTIONALS>>
 
 type FilterHired<
     REQUIRED extends OriginalService[],
@@ -104,6 +165,19 @@ type MergeHired<THIS extends UnknownModule, HIRED extends UnknownModule[]> = [
 ]
 
 /**
+ * Hired trademarks this module holds as a param slot. Module trademarks are
+ * request keys too (a required module is stubbable with `.of()`), so the slot's
+ * `service` is what tells the two apart.
+ */
+type HiredParamTrademark<
+    THIS extends UnknownModule,
+    HIRED extends UnknownModule[]
+> = Extract<
+    HIRED[number]["tm"],
+    RequestTrademarksInForm<THIS["_reqType"], "param">
+>
+
+/**
  * Valid hired modules for `hire()`. Invalid tuples become error types.
  * @public
  */
@@ -116,5 +190,6 @@ export type HiredGuard<
             true
         ) ?
             CircularModuleError[]
-        :   HIRED
+        : [HiredParamTrademark<THIS, HIRED>] extends [never] ? HIRED
+        : HiredParamError<HiredParamTrademark<THIS, HIRED>>[]
     :   DuplicateServiceError[]
