@@ -71,18 +71,31 @@ export function index<
  * @returns A map type where each key is a trademark from the list and values are the corresponding objects
  * @public
  */
+type IndexEntry<ITEM> =
+    [ITEM] extends [undefined] ? {}
+    : ITEM extends { service: { tm: infer TM extends string } } ?
+        undefined extends ITEM ? { [NAME in TM]?: Exclude<ITEM, undefined> }
+        :   { [NAME in TM]: ITEM }
+    :   {}
+
+type MapFromListTuple<
+    LIST extends ({ service: { tm: string } } | undefined)[]
+> =
+    LIST extends (
+        readonly [
+            infer HEAD,
+            ...infer TAIL extends ({ service: { tm: string } } | undefined)[]
+        ]
+    ) ?
+        Merge<IndexEntry<HEAD>, MapFromListTuple<TAIL>>
+    :   {}
+
 export type MapFromList<
     LIST extends ({ service: { tm: string } } | undefined)[]
 > =
     [Exclude<LIST[number], undefined>] extends [never] ?
         Record<string, never>
-    :   UnionToIntersection<
-            Exclude<LIST[number], undefined> extends infer ITEM ?
-                ITEM extends { service: { tm: string } } ?
-                    { [NAME in ITEM["service"]["tm"]]: ITEM }
-                :   never
-            :   never
-        >
+    :   MapFromListTuple<LIST>
 
 /**
  * @param ms - Number of milliseconds to wait

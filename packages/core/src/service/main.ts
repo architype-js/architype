@@ -5,6 +5,7 @@ import type { Supplies, Request } from "#types/records"
 import type { PartialModulePlan, Supplier } from "#types/public"
 import type {
     Module,
+    OptionalService,
     OriginalService,
     Param,
     UnknownService
@@ -40,7 +41,8 @@ export function shared<TM extends string, TYPE = any>(tm: TM) {
         _type: null as unknown as TYPE,
         _mock: false as const,
         _init: undefined as never,
-        _inited: false as const
+        _inited: false as const,
+        _maybe: false as const
     }
 }
 
@@ -52,7 +54,7 @@ export function moduleBase<
     TM extends string,
     TYPE,
     REQUIRED extends OriginalService[] = [],
-    OPTIONALS extends Param[] = [],
+    OPTIONALS extends OptionalService[] = [],
     REQUEST extends Request<{
         required: REQUIRED
         optionals: OPTIONALS
@@ -85,6 +87,7 @@ export function moduleBase<
         (service) => isModule(service) && service._awaited
     )
     const _awaited = planAwaited || depsAwaited
+    const _maybe = plan.maybe === true
 
     const _team = team(tm, required, optionals)
     const _reqType = null as unknown as REQUEST
@@ -121,14 +124,15 @@ export function moduleBase<
         _suppliesType,
         _oldReqType: _reqType,
         _oldSuppliesType: _suppliesType,
-        _implementId: simpleId()
+        _implementId: simpleId(),
+        _maybe
     }
 }
 
 export function team(
     tm: string,
     required: UnknownService[],
-    optionals: Param[]
+    optionals: OptionalService[]
 ) {
     return dedupe(
         [...required, ...optionals]

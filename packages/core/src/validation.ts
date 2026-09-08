@@ -119,7 +119,7 @@ export function assertModulePlan(
     const optionals = plan.optionals ?? []
 
     assertServices(name, required)
-    assertParams(name, optionals)
+    assertOptionals(name, optionals)
 
     if (plan.warmup !== undefined) {
         assertFunction(name, plan.warmup)
@@ -202,6 +202,28 @@ export function assertParams(
     }
     params.forEach((param) => {
         assertParam(param)
+    })
+}
+
+export function assertOptionals(
+    name: string,
+    services: unknown
+): asserts services is (Param | UnknownModule)[] {
+    if (!Array.isArray(services)) {
+        throw new TypeError(`${name} must be an array`)
+    }
+    services.forEach((service) => {
+        try {
+            assertParam(service)
+            return
+        } catch {
+            assertModule(service)
+            if (!service._maybe) {
+                throw new TypeError(
+                    `${service.tm} is not a param or maybe module`
+                )
+            }
+        }
     })
 }
 

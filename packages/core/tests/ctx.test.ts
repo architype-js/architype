@@ -630,12 +630,10 @@ describe("Context Propagation", () => {
                 factory: (deps, ctx) => {
                     const hired = ctx($B).hire($AMock)
 
-                    // Missing the required param is a type error; at runtime
-                    // it resolves to undefined rather than throwing.
-                    expect(
+                    expect(() =>
                         // @ts-expect-error - param supply is not supplied
                         hired.request({}).get()
-                    ).toBe("AMock-value")
+                    ).toThrow("Dependency param is not available")
                     expect(
                         hired.request(index($param.of("param-value"))).get()
                     ).toBe("AMock-value")

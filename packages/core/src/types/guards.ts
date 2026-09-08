@@ -1,4 +1,5 @@
 import type {
+    OptionalService,
     OriginalService,
     Param,
     PartialModulePlan,
@@ -27,7 +28,7 @@ export interface DuplicateServiceError {
 
 export type Team<
     REQUIRED extends UnknownService[],
-    OPTIONALS extends Param[],
+    OPTIONALS extends OptionalService[],
     SERVICES extends UnknownService[] = [...REQUIRED, ...OPTIONALS]
 > =
     any[] extends SERVICES ? never
@@ -46,7 +47,7 @@ export type Team<
 type TeamHasCircular<
     TM extends string,
     REQUIRED extends UnknownService[],
-    OPTIONALS extends Param[]
+    OPTIONALS extends OptionalService[]
 > =
     string extends TM ? false
     : TM extends Team<REQUIRED, OPTIONALS> ? true
@@ -54,7 +55,7 @@ type TeamHasCircular<
 
 type PlanHasDuplicate<
     REQUIRED extends OriginalService[],
-    OPTIONALS extends Param[]
+    OPTIONALS extends OptionalService[]
 > =
     [FindDuplicateTrademark<[...REQUIRED, ...OPTIONALS]>] extends [never] ?
         false
@@ -72,13 +73,14 @@ export type ModulePlanGuard<
     TM extends string,
     TYPE,
     REQUIRED extends OriginalService[] = [],
-    OPTIONALS extends Param[] = [],
-    AWAITED extends boolean | undefined = undefined
+    OPTIONALS extends OptionalService[] = [],
+    AWAITED extends boolean | undefined = undefined,
+    MAYBE extends boolean | undefined = undefined
 > =
     PlanHasDuplicate<REQUIRED, OPTIONALS> extends true ? DuplicateServiceError
     : TeamHasCircular<TM, REQUIRED, OPTIONALS> extends true ?
         CircularModuleError
-    :   PartialModulePlan<TYPE, REQUIRED, OPTIONALS, AWAITED>
+    :   PartialModulePlan<TYPE, REQUIRED, OPTIONALS, AWAITED, MAYBE>
 
 type FilterHired<
     REQUIRED extends OriginalService[],

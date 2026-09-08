@@ -233,10 +233,10 @@ describe("Optionals Feature", () => {
                 }
             })
 
-            expect(
+            expect(() =>
                 // @ts-expect-error - missing required service
                 $service.request(index($optional.of(42))).get()
-            ).toBe("result")
+            ).toThrow("Dependency required is not available")
 
             // Should work without optional
             $service.request(index($required.of("test"))).get()

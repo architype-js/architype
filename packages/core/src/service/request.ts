@@ -5,13 +5,7 @@ import type {
     UnknownModule
 } from "#types/public"
 import type { MarketRecord, RegistryRecord } from "#types/records"
-import {
-    wasRequested,
-    isModule,
-    isModuleSupplier,
-    isParam,
-    once
-} from "#utils"
+import { wasRequested, isModule, isModuleSupplier, isParam, once } from "#utils"
 import { assertPlainObject } from "#validation"
 
 export function request<THIS extends UnknownModule>(
@@ -66,7 +60,7 @@ export function request<THIS extends UnknownModule>(
             registry[service.tm] = once(() => service._resolve(registry))
             continue
         }
-        if (isParam(service)) {
+        if (isParam(service) && service._inited) {
             registry[service.tm] = service.of(service._init)
         }
     }

@@ -349,7 +349,7 @@ const $myDrafts = service("myDrafts").module({
 | `.init(value)`                  | Give a param a default value so it can be omitted from `request(...)`.                                                                       |
 | `.module({ ... })`              | A graph node: a value derived from params and other modules. Chain after `.param()` to fill that param.                                      |
 | `required`                      | Dependencies that must be available to the factory.                                                                                          |
-| `optionals`                     | Params a module can use if supplied; factories see them as `T \| undefined`.                                                                 |
+| `optionals`                     | Params or `maybe` modules a module can use if supplied; factories see them as `T \| undefined`.                                              |
 | `factory`                       | The function that produces the module value from inferred supplies and `ctx`.                                                                |
 | `warmup`                        | Optional hook invoked after the factory returns, useful for eager warming of lazy values.                                                    |
 | `.caching(config)`              | Enable cross-request caching after `.module(...)`.                                                                                           |
@@ -435,7 +435,7 @@ supplier.market.profile.get()
 
 ### Optionals
 
-Put a param in `optionals` when a module can use it if present but should still resolve without it.
+Put a param or a `maybe: true` module in `optionals` when a module can use it if present but should still resolve without it. Definite modules stay in `required`.
 
 ```ts
 const $config = service("config").param<{ apiUrl: string }>()
@@ -457,7 +457,7 @@ const signedIn = $client
     .get()
 ```
 
-Inside the factory, `auth` is inferred as `{ token: string } | undefined`.
+Inside the factory, `auth` is inferred as `{ token: string } | undefined`. A loader that may miss uses `maybe: true` — see [maybe values](#maybe-values).
 
 ### Nested Request Scopes with ctx(...)
 
@@ -606,6 +606,40 @@ What that means in practice:
 - **Dependents stay sync.** Factories that require an awaited module see `T` in their supplies.
 - **`.get()` stays a Promise.** Any module whose team includes an awaited module has `.get()` typed as `Promise<Awaited<_type>>`.
 - **`.supplies` becomes a Promise.**
+
+### Maybe values
+
+The dual of `awaited: true`. **`maybe: true` is a factory mark** on a module plan — not a param, not `.of()`. Pass it when the factory returns `T | undefined` but the module’s `_type` should stay **`T`**. Dependents that `required` the trademark still see `T`. The runner throws `Dependency <tm> is not available` only if that trademark is **required** by the factory reading it **and** the value is a **miss**: the slot is empty, or a `maybe: true` factory returned `undefined`. Dependents that list it under `optionals` see `T | undefined` and do not throw.
+
+```ts
+const $card = service("card").param<{ id: string }>()
+
+const $cardFromDb = $card.module({
+    maybe: true,
+    awaited: true,
+    required: [$cardId, $db],
+    factory: async ({ cardId, db }) => db.cards.findById(cardId) // Card | undefined
+})
+
+const $title = service("title").module({
+    required: [$card],
+    factory: ({ card }) => card.id // `{ id: string }`, miss throws
+})
+
+const $preview = service("preview").module({
+    optionals: [$card],
+    factory: ({ card }) => card?.id ?? "none" // `{ id: string } | undefined`
+})
+```
+
+What that means in practice:
+
+- **`_type` stays `T`.** Without `maybe: true`, a factory that returns `T | undefined` is a type error.
+- **`required` supplies stay `T`.** A miss throws when that factory reads the supply.
+- **`optionals` still sees absence.** Same implement, no throw. A maybe module may itself sit in `optionals` (auto-wires; the factory sees `T | undefined`).
+- **`.of()` is always the slot type.** Stamp a definite `T`, or omit the key (`index(value ? $card.of(value) : undefined)`). There is no `.maybe()` on params.
+- **Slot-typed `undefined` is a value.** `param<Card | undefined>().of(undefined)` on a required read does not throw — the param is not maybe. A `maybe: true` implement of that same param is allowed: its factory `undefined` is a miss (required readers throw); the stamp of `undefined` is not.
+- **`null` is a value.** `param<Card | null>()` is a fact about the slot, unrelated to `maybe: true`.
 
 ### Caching
 
@@ -959,7 +993,7 @@ Creates a replacement module with the same trademark and a compatible value type
 const profile = $profile.hire($userMock).request({}).get()
 ```
 
-Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks. If the graph `required`s a param, `hire()` type-errors until a same-trademark module is included (or the param is stamped with `.of(...)`).
+Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks. If the graph `required`s a param, a same-trademark implement closes that key. A `maybe: true` implement that misses throws only when the factory reading that trademark listed it under `required` (not `optionals`).
 
 ### `ctx(service)`
 

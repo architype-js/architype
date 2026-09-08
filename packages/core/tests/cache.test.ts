@@ -40,7 +40,7 @@ describe("caching", () => {
             expect(supplier.market.config.get()).toBe("default")
         })
 
-        it("sets _requested true for omitted optional params soft-filled with of(_init)", () => {
+        it("leaves omitted non-inited optionals undefined in the market", () => {
             const $optional = service("optional").param<number>()
             const $mod = service("modOptional").module({
                 optionals: [$optional],
@@ -48,8 +48,8 @@ describe("caching", () => {
             })
 
             const supplier = $mod.request({})
-            expect(supplier.market.optional._requested).toBe(true)
-            expect(supplier.market.optional.get()).toBeUndefined()
+            expect(supplier.market.optional).toBeUndefined()
+            expect(supplier.get()).toBe(-1)
         })
 
         it("sets _requested false for factory-resolved modules", () => {

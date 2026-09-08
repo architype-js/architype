@@ -5,6 +5,7 @@ import type { ModulePlanGuard } from "#types/guards"
 import type {
     EffectiveAwaited,
     Module,
+    OptionalService,
     OriginalService,
     Param,
     PartialModulePlan
@@ -15,13 +16,17 @@ export function service<TM extends string>(tm: TM) {
     function module<
         TYPE,
         REQUIRED extends OriginalService[] = [],
-        OPTIONALS extends Param[] = [],
-        AWAITED extends boolean | undefined = undefined
+        OPTIONALS extends OptionalService[] = [],
+        AWAITED extends boolean | undefined = undefined,
+        MAYBE extends boolean | undefined = undefined
     >(
-        plan: ModulePlanGuard<TM, TYPE, REQUIRED, OPTIONALS, AWAITED>
+        plan: ModulePlanGuard<TM, TYPE, REQUIRED, OPTIONALS, AWAITED, MAYBE>
     ): Module<
         TM,
-        AWAITED extends true ? Awaited<TYPE> : TYPE,
+        Exclude<
+            AWAITED extends true ? Awaited<TYPE> : TYPE,
+            MAYBE extends true ? undefined : never
+        >,
         OPTIONALS[number]["tm"],
         undefined,
         Request<{
@@ -30,8 +35,8 @@ export function service<TM extends string>(tm: TM) {
         }>,
         [],
         false,
-        EffectiveAwaited<AWAITED, REQUIRED>
-    > {
+        EffectiveAwaited<AWAITED, [...REQUIRED, ...OPTIONALS]>
+    > & { _maybe: MAYBE extends true ? true : false } {
         return {
             ...moduleBase(
                 tm,
@@ -61,7 +66,8 @@ export function service<TM extends string>(tm: TM) {
          * @param plan - Plan for the module
          * @param plan.factory - Factory function that creates the value from its dependencies
          * @param plan.warmup - Optional function called after the factory returns (see README for eager / lazy / warmed patterns)
-         * @param plan.awaited - When true on a sync param chain, factory may return `Promise<T>` while `_type` stays `T`
+         * @param plan.awaited - When true, factory may return `Promise<T>` while `_type` stays `T`
+         * @param plan.maybe - When true, factory may return `T | undefined` while `_type` stays `T`. The runner throws only if a factory that `required` this trademark would receive a miss.
          *
          * @returns A module with methods like call, provision, mock, and hire
          * @public

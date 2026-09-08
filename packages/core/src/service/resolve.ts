@@ -44,6 +44,19 @@ type SyncSupplies<THIS extends UnknownModule> = SuppliesPlan<{
     optionals: THIS["_optionals"]
 }>
 
+/** Miss: no supplier, or a maybe module whose value is `undefined`. */
+function isRequiredMiss(
+    isRequiredTm: (name: string) => boolean,
+    name: string,
+    supplier: unknown,
+    value: unknown
+): boolean {
+    if (!isRequiredTm(name) || value !== undefined) return false
+    if (supplier == null) return true
+    const service = (supplier as { service?: { _maybe?: boolean } }).service
+    return service?._maybe === true
+}
+
 /**
  * Internal resolve method that creates the actual supplier.
  *
@@ -56,6 +69,11 @@ export function _resolve<THIS extends UnknownModule>(
     this: THIS,
     registry: RegistryRecord
 ): Supplier<THIS> {
+    const requiredTms = new Set(this._required.map((service) => service.tm))
+    const optionalTms = new Set(this._optionals.map((service) => service.tm))
+    const isRequiredTm = (name: string) =>
+        requiredTms.has(name) && !optionalTms.has(name)
+
     const { supplies, market } = Object.entries(registry).reduce(
         (acc, [name, registration]) => {
             if (!this._team.some((service) => service.tm === name)) return acc
@@ -76,7 +94,14 @@ export function _resolve<THIS extends UnknownModule>(
 
             Object.defineProperty(acc.supplies, name, {
                 get() {
-                    return loadSupplier()?.get()
+                    const supplier = loadSupplier()
+                    const value = supplier?.get()
+                    if (isRequiredMiss(isRequiredTm, name, supplier, value)) {
+                        throw new Error(
+                            `Dependency ${name} is not available`
+                        )
+                    }
+                    return value
                 },
                 enumerable: true,
                 configurable: true
@@ -112,6 +137,16 @@ export function _resolve<THIS extends UnknownModule>(
             const raw = (supplies as Record<string, unknown>)[name]
             ;(resolved as Record<string, unknown>)[name] =
                 isModule(sub.service) && sub.service._awaited ? await raw : raw
+            if (
+                isRequiredMiss(
+                    isRequiredTm,
+                    name,
+                    sub,
+                    (resolved as Record<string, unknown>)[name]
+                )
+            ) {
+                throw new Error(`Dependency ${name} is not available`)
+            }
         }
         return resolved
     })

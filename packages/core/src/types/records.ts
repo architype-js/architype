@@ -11,11 +11,12 @@ import type { UnionToIntersection } from "#utils"
 export type MaybeFn<A extends any[], R> = R | ((...args: A) => R)
 
 /**
- * A generic map of suppliers
+ * A generic map of suppliers. `undefined` is a missing non-inited param
+ * (not a stamped supplier).
  * @public
  */
 export type RegistryRecord<SERVICE extends UnknownService = UnknownService> =
-    Record<string, MaybeFn<[], Supplier<SERVICE>>>
+    Record<string, MaybeFn<[], Supplier<SERVICE>> | undefined>
 
 /**
  * A generic map of resolved supplies
