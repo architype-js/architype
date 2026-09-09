@@ -1,5 +1,6 @@
 import type {
     OriginalService as OriginalService,
+    OptionalService,
     Param,
     UnknownService,
     Supplier,
@@ -9,7 +10,7 @@ import type { SuppliesPlan } from "#types/records"
 
 export interface Service<TM extends string = string, TYPE = unknown> {
     tm: TM
-    of: <THIS extends UnknownService, VALUE extends TYPE>(
+    of: <THIS extends UnknownService, VALUE extends THIS["_type"]>(
         this: THIS,
         value: VALUE
     ) => Supplier<THIS>
@@ -19,7 +20,7 @@ export interface Service<TM extends string = string, TYPE = unknown> {
 export type Factory<
     TYPE,
     REQUIRED extends OriginalService[] = [],
-    OPTIONALS extends Param[] = []
+    OPTIONALS extends OptionalService[] = []
 > = (
     supplies: SuppliesPlan<{
         required: REQUIRED
@@ -34,7 +35,7 @@ export type Factory<
 export type Warmup<
     TYPE,
     REQUIRED extends OriginalService[] = [],
-    OPTIONALS extends Param[] = []
+    OPTIONALS extends OptionalService[] = []
 > = (
     value: TYPE,
     supplies: SuppliesPlan<{
@@ -46,7 +47,7 @@ export type Warmup<
 export type ModulePlan<
     TYPE,
     REQUIRED extends OriginalService[],
-    OPTIONALS extends Param[]
+    OPTIONALS extends OptionalService[]
 > = {
     required: [...REQUIRED]
     optionals: [...OPTIONALS]
@@ -54,4 +55,8 @@ export type ModulePlan<
     warmup: Warmup<TYPE, REQUIRED, OPTIONALS>
 }
 
-export type UnknownModulePlan = ModulePlan<unknown, OriginalService[], Param[]>
+export type UnknownModulePlan = ModulePlan<
+    unknown,
+    OriginalService[],
+    OptionalService[]
+>

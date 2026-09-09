@@ -21,28 +21,80 @@ export function CtxFactory<
     >,
     MODULE extends Pick<UnknownModule, "_required" | "_optionals">
 >(callerSupplier: SUPPLIER, callerModule: MODULE): Ctx<MODULE> {
-    return <SERVICE extends Pick<UnknownService, "tm">>(
-        service: SERVICE
-    ): any => {
-        const actual =
-            callerModule._required.find((member) => member.tm === service.tm) ??
-            service
+    const fromCaller = (service: Pick<UnknownService, "tm">) =>
+        callerModule._required.find((member) => member.tm === service.tm) ??
+        service
+
+    return ((
+        service: Pick<UnknownService, "tm">,
+        ...hired: UnknownModule[]
+    ) => {
+        const actual = fromCaller(service)
 
         if (!isModule(actual)) {
+            if (hired.length > 0) {
+                throw new Error(
+                    `ctx: extra modules require a module root, got param "${service.tm}"`
+                )
+            }
             return actual
         }
 
-        return {
+        const root = {
             ...actual,
             _caller: callerSupplier
         }
-    }
+
+        if (hired.length === 0) return root
+
+        return root.hire(
+            ...(hired.map((module) => {
+                const found = fromCaller(module)
+                return isModule(found) ? found : module
+            }) as never)
+        )
+    }) as unknown as Ctx<MODULE>
 }
 
 type SyncSupplies<THIS extends UnknownModule> = SuppliesPlan<{
     required: THIS["_required"]
     optionals: THIS["_optionals"]
 }>
+
+type MarketMap = Record<string, Supplier<UnknownService> | undefined>
+
+function isAwaitedSupplier(
+    producer: { service: UnknownService; market?: unknown } | undefined
+): boolean {
+    return (
+        producer != null &&
+        isModule(producer.service) &&
+        teamAwaited(producer.service, (producer.market ?? {}) as MarketMap)
+    )
+}
+
+function teamAwaited(
+    service: Pick<UnknownModule, "_awaited" | "_team">,
+    market: MarketMap
+): boolean {
+    return (
+        service._awaited ||
+        service._team.some((member) => isAwaitedSupplier(market[member.tm]))
+    )
+}
+
+/** Miss: no supplier, or a maybe module whose value is `undefined`. */
+function isRequiredMiss(
+    isRequiredTm: (name: string) => boolean,
+    name: string,
+    supplier: unknown,
+    value: unknown
+): boolean {
+    if (!isRequiredTm(name) || value !== undefined) return false
+    if (supplier == null) return true
+    const service = (supplier as { service?: { _maybe?: boolean } }).service
+    return service?._maybe === true
+}
 
 /**
  * Internal resolve method that creates the actual supplier.
@@ -56,6 +108,11 @@ export function _resolve<THIS extends UnknownModule>(
     this: THIS,
     registry: RegistryRecord
 ): Supplier<THIS> {
+    const requiredTms = new Set(this._required.map((service) => service.tm))
+    const optionalTms = new Set(this._optionals.map((service) => service.tm))
+    const isRequiredTm = (name: string) =>
+        requiredTms.has(name) && !optionalTms.has(name)
+
     const { supplies, market } = Object.entries(registry).reduce(
         (acc, [name, registration]) => {
             if (!this._team.some((service) => service.tm === name)) return acc
@@ -76,7 +133,12 @@ export function _resolve<THIS extends UnknownModule>(
 
             Object.defineProperty(acc.supplies, name, {
                 get() {
-                    return loadSupplier()?.get()
+                    const supplier = loadSupplier()
+                    const value = supplier?.get()
+                    if (isRequiredMiss(isRequiredTm, name, supplier, value)) {
+                        throw new Error(`Dependency ${name} is not available`)
+                    }
+                    return value
                 },
                 enumerable: true,
                 configurable: true
@@ -106,12 +168,22 @@ export function _resolve<THIS extends UnknownModule>(
         assertRequired()
         const resolved = {} as SyncSupplies<THIS>
         for (const name of Object.keys(market)) {
-            const sub = (market as Record<string, Supplier<UnknownService>>)[
-                name
-            ]!
-            const raw = (supplies as Record<string, unknown>)[name]
+            const supplier = (
+                market as Record<string, Supplier<UnknownService>>
+            )[name]!
+            const supply = (supplies as Record<string, unknown>)[name]
             ;(resolved as Record<string, unknown>)[name] =
-                isModule(sub.service) && sub.service._awaited ? await raw : raw
+                isAwaitedSupplier(supplier) ? await supply : supply
+            if (
+                isRequiredMiss(
+                    isRequiredTm,
+                    name,
+                    supplier,
+                    (resolved as Record<string, unknown>)[name]
+                )
+            ) {
+                throw new Error(`Dependency ${name} is not available`)
+            }
         }
         return resolved
     })
@@ -135,10 +207,8 @@ export function _resolve<THIS extends UnknownModule>(
     }
 
     const _caching = this._caching
-    const teamAwaited =
-        this._awaited ||
-        this._team.some((member) => isModule(member) && member._awaited)
-    const runner = teamAwaited ? asyncFactoryRunner : syncFactoryRunner
+    const awaited = isAwaitedSupplier({ service: this, market })
+    const runner = awaited ? asyncFactoryRunner : syncFactoryRunner
     const get = once(
         _caching ?
             _caching.cacher(
@@ -153,7 +223,7 @@ export function _resolve<THIS extends UnknownModule>(
         get,
         market,
         get supplies() {
-            return teamAwaited ? awaitedSupplies() : supplies
+            return awaited ? awaitedSupplies() : supplies
         },
         service: this,
         _ctx<SERVICE extends UnknownService>(service: SERVICE) {

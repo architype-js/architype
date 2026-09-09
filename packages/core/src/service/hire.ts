@@ -3,6 +3,7 @@ import type { HiredGuard } from "#types/guards"
 import type {
     AfterHireRequest,
     Module,
+    OptionalService,
     RequiredHaveAwaited,
     UnknownModule
 } from "#types/public"
@@ -13,8 +14,9 @@ import { assertModules } from "#validation"
 /**
  * Hires additional modules into the dependency chain of this module.
  * This allows replacing or adding modules composition-root style for testing,
- * mocking, or batching. Hired modules override modules with matching
- * names in the transitive dependency tree.
+ * mocking, or batching. Hired modules override matching trademarks, or join
+ * the graph when the trademark is not on it yet. A module overwrites a param
+ * of the same trademark.
  *
  * @param hired - Modules to hire (replace/add to the team)
  * @returns A new module with the hired modules merged into the team
@@ -45,12 +47,28 @@ export function Hire() {
         THIS["_awaited"] extends true ? true : RequiredHaveAwaited<HIRED>
     > {
         assertModules(this.tm, hired, true)
+        const optionalTms = new Set(
+            this._optionals.map((optional) => optional.tm)
+        )
+        const substitutes = (service: { tm: string }) =>
+            hired.some((newService) => newService.tm === service.tm)
+
         const mergedServices = [
-            ...this._required.filter(
-                (oldService) =>
-                    !hired.some((newService) => newService.tm === oldService.tm)
+            ...this._required.filter((oldService) => !substitutes(oldService)),
+            // An implement for an optional param stays optional, so a `maybe`
+            // miss keeps flowing through as `undefined` instead of throwing.
+            ...hired.filter((newService) => !optionalTms.has(newService.tm))
+        ]
+
+        const mergedOptionals: OptionalService[] = [
+            ...this._optionals.filter(
+                (oldOptional) => !substitutes(oldOptional)
             ),
-            ...hired
+            // A definite implement is not a `MaybeModule`, but filling an
+            // optional slot that is always filled is sound.
+            ...(hired.filter((newService) =>
+                optionalTms.has(newService.tm)
+            ) as OptionalService[])
         ]
 
         const mergedHired = [
@@ -69,17 +87,17 @@ export function Hire() {
         const _suppliesType = null as unknown as Supplies<typeof _reqType>
 
         const _awaited = (this._awaited ||
-            hired.some((module) => module._awaited)) as THIS["_awaited"] extends (
-            true
-        ) ?
-            true
+            hired.some(
+                (module) => module._awaited
+            )) as THIS["_awaited"] extends true ? true
         :   RequiredHaveAwaited<HIRED>
 
         return {
             ...this,
             _required: mergedServices,
+            _optionals: mergedOptionals,
             _hired: mergedHired,
-            _team: team(this.tm, mergedServices, this._optionals),
+            _team: team(this.tm, mergedServices, mergedOptionals),
             _awaited,
             _reqType,
             _suppliesType,

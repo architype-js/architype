@@ -630,12 +630,10 @@ describe("Context Propagation", () => {
                 factory: (deps, ctx) => {
                     const hired = ctx($B).hire($AMock)
 
-                    // Missing the required param is a type error; at runtime
-                    // it resolves to undefined rather than throwing.
-                    expect(
+                    expect(() =>
                         // @ts-expect-error - param supply is not supplied
                         hired.request({}).get()
-                    ).toBe("AMock-value")
+                    ).toThrow("Dependency param is not available")
                     expect(
                         hired.request(index($param.of("param-value"))).get()
                     ).toBe("AMock-value")
@@ -643,6 +641,90 @@ describe("Context Propagation", () => {
             })
 
             $main.request({}).get()
+        })
+    })
+
+    describe("ctx(root, ...modules)", () => {
+        it("hires companions onto the nested graph and exposes them in supplies", () => {
+            const $root = service("root").module({
+                factory: () => "root-value"
+            })
+            const $leaf = service("leaf").module({
+                factory: () => "leaf-value"
+            })
+
+            const $main = service("main").module({
+                factory: (_, ctx) => {
+                    const graph = ctx($root, $leaf).request({})
+                    expect(graph.get()).toBe("root-value")
+                    expectTypeOf(graph.supplies.leaf).toExtend<string>()
+                    return graph.supplies.leaf
+                }
+            })
+
+            expect($main.request({}).get()).toBe("leaf-value")
+        })
+
+        it("uses entry-point hires for the root and companions", () => {
+            const $root = service("root").module({
+                factory: () => "root-original"
+            })
+            const $leaf = service("leaf").module({
+                factory: () => "leaf-original"
+            })
+            const $rootMock = $root.mock({
+                factory: () => "root-mocked"
+            })
+            const $leafMock = $leaf.mock({
+                factory: () => "leaf-mocked"
+            })
+
+            const $main = service("main").module({
+                factory: (_, ctx) => {
+                    const graph = ctx($root, $leaf).request({})
+                    return {
+                        root: graph.get(),
+                        leaf: graph.supplies.leaf
+                    }
+                }
+            })
+
+            expect($main.request({}).get()).toEqual({
+                root: "root-original",
+                leaf: "leaf-original"
+            })
+            expect($main.hire($rootMock, $leafMock).request({}).get()).toEqual({
+                root: "root-mocked",
+                leaf: "leaf-mocked"
+            })
+        })
+
+        it("lets .hire() after ctx overwrite entry-point hires", () => {
+            const $root = service("root").module({
+                factory: () => "root-value"
+            })
+            const $leaf = service("leaf").module({
+                factory: () => "leaf-original"
+            })
+            const $leafMock = $leaf.mock({
+                factory: () => "leaf-mocked"
+            })
+
+            const $inherit = service("inherit").module({
+                factory: (_, ctx) =>
+                    ctx($root, $leaf).request({}).supplies.leaf
+            })
+            const $overwrite = service("overwrite").module({
+                factory: (_, ctx) =>
+                    ctx($root).hire($leaf).request({}).supplies.leaf
+            })
+
+            expect($inherit.hire($leafMock).request({}).get()).toBe(
+                "leaf-mocked"
+            )
+            expect($overwrite.hire($leafMock).request({}).get()).toBe(
+                "leaf-original"
+            )
         })
     })
 })

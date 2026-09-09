@@ -11,11 +11,12 @@ import type { UnionToIntersection } from "#utils"
 export type MaybeFn<A extends any[], R> = R | ((...args: A) => R)
 
 /**
- * A generic map of suppliers
+ * A generic map of suppliers. `undefined` is a missing non-inited param
+ * (not a stamped supplier).
  * @public
  */
 export type RegistryRecord<SERVICE extends UnknownService = UnknownService> =
-    Record<string, MaybeFn<[], Supplier<SERVICE>>>
+    Record<string, MaybeFn<[], Supplier<SERVICE>> | undefined>
 
 /**
  * A generic map of resolved supplies
@@ -69,8 +70,7 @@ type RequestBase<
         | Exclude<
               PLAN["required"][number],
               Param
-          > as OPTIONAL["tm"]]?: OPTIONAL extends Param ?
-        Supplier<OPTIONAL>
+          > as OPTIONAL["tm"]]?: OPTIONAL extends Param ? Supplier<OPTIONAL>
     : OPTIONAL extends UnknownModule ?
         Supplier<
             Module<
@@ -164,22 +164,22 @@ type SuppliesBase<REQUEST extends Partial<MarketRecord<UnknownService>>> = {
  * `T | undefined`; required params, inited required params, and required-module
  * overrides stay non-nullable.
  */
-export type Supplies<
-    REQUEST extends Partial<MarketRecord<UnknownService>>
-> =
+export type Supplies<REQUEST extends Partial<MarketRecord<UnknownService>>> =
     string extends keyof Required<REQUEST> ? any
     :   {
             [NAME in keyof SuppliesBase<REQUEST>]:
                 | SuppliesBase<REQUEST>[NAME]
                 | (NAME extends keyof REQUEST ?
-                    undefined extends REQUEST[NAME] ?
-                        Required<REQUEST>[NAME] extends Supplier<infer SERVICE> ?
-                            SERVICE extends Param ?
-                                [SERVICE["_init"]] extends [never] ?
-                                    undefined
-                                :   never
-                            :   never
-                        :   never
-                    :   never
-                :   never)
+                      undefined extends REQUEST[NAME] ?
+                          Required<REQUEST>[NAME] extends (
+                              Supplier<infer SERVICE>
+                          ) ?
+                              SERVICE extends Param ?
+                                  [SERVICE["_init"]] extends [never] ?
+                                      undefined
+                                  :   never
+                              :   never
+                          :   never
+                      :   never
+                  :   never)
         }

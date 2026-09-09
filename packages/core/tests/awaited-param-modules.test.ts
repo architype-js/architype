@@ -5,14 +5,6 @@ describe("awaited: true on param.module()", () => {
     it("awaits an async param implement before a sync dependent factory", async () => {
         const $edition = service("edition").param<{ id: string }>()
 
-        const $title = service("title").module({
-            required: [$edition],
-            factory: ({ edition }) => {
-                expect(edition).toEqual({ id: "daily-today" })
-                return edition.id
-            }
-        })
-
         const $fromDb = $edition.module({
             awaited: true,
             factory: async () => {
@@ -21,7 +13,15 @@ describe("awaited: true on param.module()", () => {
             }
         })
 
-        const result = $title.hire($fromDb).request({}).get()
+        const $title = service("title").module({
+            required: [$fromDb],
+            factory: ({ edition }) => {
+                expect(edition).toEqual({ id: "daily-today" })
+                return edition.id
+            }
+        })
+
+        const result = $title.request({}).get()
         expect(result).toBeInstanceOf(Promise)
         expect(await result).toBe("daily-today")
     })
@@ -50,18 +50,135 @@ describe("awaited: true on param.module()", () => {
     it("types .get() as Promise when the team includes an awaited: true module", () => {
         const $edition = service("edition").param<{ id: string }>()
 
-        const $title = service("title").module({
-            required: [$edition],
-            factory: ({ edition }) => edition.id
-        })
-
         const $fromDb = $edition.module({
             awaited: true,
             factory: async () => ({ id: "daily-today" })
         })
 
-        const supplier = $title.hire($fromDb).request({})
+        const $title = service("title").module({
+            required: [$fromDb],
+            factory: ({ edition }) => edition.id
+        })
+
+        const supplier = $title.request({})
         expectTypeOf(supplier.get).returns.toEqualTypeOf<Promise<string>>()
+    })
+
+    it("awaits a sibling implement when the dependent required the param", async () => {
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            awaited: true,
+            factory: async () => {
+                await sleep(10)
+                return { id: "ada" }
+            }
+        })
+
+        const $greeting = service("greeting").module({
+            required: [$user],
+            factory: ({ user }) => {
+                expect(user).toEqual({ id: "ada" })
+                return `hi ${user.id}`
+            }
+        })
+
+        const $greetingImpl = $greeting.hire($fromDb)
+
+        const $page = service("page").module({
+            required: [$greetingImpl],
+            factory: ({ greeting }) => greeting.toUpperCase()
+        })
+
+        const result = $page.request({}).get()
+        expect(result).toBeInstanceOf(Promise)
+        expect(await result).toBe("HI ADA")
+    })
+
+    it("awaits a sibling implement when the param-dependent is listed first", async () => {
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            awaited: true,
+            factory: async () => {
+                await sleep(10)
+                return { id: "ada" }
+            }
+        })
+
+        const $greeting = service("greeting").module({
+            required: [$user],
+            factory: ({ user }) => {
+                expect(user).toEqual({ id: "ada" })
+                return `hi ${user.id}`
+            }
+        })
+
+        const $greetingImpl = $greeting.hire($fromDb)
+
+        const $page = service("page").module({
+            required: [$greetingImpl],
+            factory: ({ greeting }) => greeting.toUpperCase()
+        })
+
+        expect(await $page.request({}).get()).toBe("HI ADA")
+    })
+
+    it("awaits a nested sibling implement when another dependent required the param", async () => {
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            awaited: true,
+            factory: async () => {
+                await sleep(10)
+                return { id: "ada" }
+            }
+        })
+
+        const $sidebar = service("sidebar").module({
+            required: [$fromDb],
+            factory: ({ user }) => `side ${user.id}`
+        })
+
+        const $greeting = service("greeting").module({
+            required: [$user],
+            factory: ({ user }) => {
+                expect(user).toEqual({ id: "ada" })
+                return `hi ${user.id}`
+            }
+        })
+
+        const $greetingImpl = $greeting.hire($fromDb)
+
+        const $page = service("page").module({
+            required: [$sidebar, $greetingImpl],
+            factory: ({ sidebar, greeting }) => `${sidebar}/${greeting}`
+        })
+
+        expect(await $page.request({}).get()).toBe("side ada/hi ada")
+    })
+
+    it("does not unwrap a param whose type is Promise", async () => {
+        const $pending = service("pending").param<Promise<string>>()
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            awaited: true,
+            factory: async () => ({ id: "ada" })
+        })
+
+        const inner = Promise.resolve("ok")
+
+        const $label = service("label").module({
+            required: [$pending, $fromDb],
+            factory: ({ pending, user }) => {
+                expect(user).toEqual({ id: "ada" })
+                expect(pending).toBe(inner)
+                return pending
+            }
+        })
+
+        expect(await $label.request(index($pending.of(inner))).get()).toBe("ok")
     })
 
     it("stays sync when the param is stamped with a value", () => {

@@ -2,8 +2,8 @@ import { moduleBase } from "#service/main"
 import type { ModulePlanGuard } from "#types/guards"
 import { assertModulePlan } from "#validation"
 import type {
+    OptionalService,
     OriginalService,
-    Param,
     PartialModulePlan,
     UnknownModule,
     Mock as MockType
@@ -31,7 +31,7 @@ export function Mock() {
         THIS extends UnknownModule & { _mock: false },
         TYPE2 extends THIS["_type"],
         REQUIRED2 extends OriginalService[] = [],
-        OPTIONALS2 extends Param[] = []
+        OPTIONALS2 extends OptionalService[] = []
     >(
         this: THIS,
         plan: ModulePlanGuard<THIS["tm"], TYPE2, REQUIRED2, OPTIONALS2>

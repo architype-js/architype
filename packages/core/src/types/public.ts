@@ -26,35 +26,41 @@ export interface Param<
         value: THIS["_type"]
     ) => Param<THIS["tm"], THIS["_type"], THIS["_type"]>
     /**
-     * Creates a module that fills this param (same trademark). Hire it at the
-     * request entry-point so dependents that `required` the param receive this
-     * implementation.
+     * Creates a module sharing this param's trademark and type. Dependents
+     * `required` (or `optionals`) the module to consume it — a param slot is
+     * filled by a stamped value, never by hiring this module onto it. Stamp
+     * this module's resolved value to carry it into a graph built on the param.
      *
      * Pass `awaited: true` when the factory returns `Promise<T>` but the param
-     * (and module `_type`) stay `T`.
+     * (and module `_type`) stay `T`. Pass `maybe: true` when the factory
+     * returns `T | undefined` but `_type` stays `T`. The runner throws only
+     * if a dependent that `required` this trademark would receive a miss.
      */
     module: <
         THIS extends Param<NAME, TYPE, INIT>,
         const AWAITED extends boolean | undefined = undefined,
-        TYPE2 extends (
-            AWAITED extends true ? THIS["_type"] | Promise<THIS["_type"]>
-            :   THIS["_type"]
-        ) = AWAITED extends true ? THIS["_type"] | Promise<THIS["_type"]>
-        :   THIS["_type"],
+        const MAYBE extends boolean | undefined = undefined,
         REQUIRED2 extends OriginalService[] = [],
-        OPTIONALS2 extends Param[] = []
+        OPTIONALS2 extends OptionalService[] = []
     >(
         this: THIS,
         plan: ModulePlanGuard<
             THIS["tm"],
-            TYPE2,
+            | THIS["_type"]
+            | (MAYBE extends true ? undefined : never)
+            | (AWAITED extends true ?
+                  Promise<
+                      THIS["_type"] | (MAYBE extends true ? undefined : never)
+                  >
+              :   never),
             REQUIRED2,
             OPTIONALS2,
-            AWAITED
+            AWAITED,
+            MAYBE
         >
     ) => Module<
         THIS["tm"],
-        AWAITED extends true ? THIS["_type"] : TYPE2,
+        THIS["_type"],
         OPTIONALS2[number]["tm"],
         undefined,
         Request<{
@@ -63,8 +69,8 @@ export interface Param<
         }>,
         [],
         false,
-        EffectiveAwaited<AWAITED, REQUIRED2>
-    >
+        EffectiveAwaited<AWAITED, [...REQUIRED2, ...OPTIONALS2]>
+    > & { _maybe: MAYBE extends true ? true : false }
     _type: TYPE
     _param: true
     _mock: false
@@ -82,26 +88,32 @@ export interface Param<
  * Plan for `module()` / `mock()`.
  * When chaining on a sync param, pass `awaited: true` so an async factory keeps
  * `_type` as the param’s `T` (not `Promise<T>`) — dependents receive the awaited value.
+ * Pass `maybe: true` so a factory that returns `T | undefined` keeps `_type` as `T`.
  */
 export type PartialModulePlan<
     TYPE,
     REQUIRED extends OriginalService[] = [],
-    OPTIONALS extends Param[] = [],
-    AWAITED extends boolean | undefined = undefined
+    OPTIONALS extends OptionalService[] = [],
+    AWAITED extends boolean | undefined = undefined,
+    MAYBE extends boolean | undefined = undefined
 > = {
     required?: [...REQUIRED]
     optionals?: [...OPTIONALS]
     factory: Factory<TYPE, REQUIRED, OPTIONALS>
     warmup?: Warmup<TYPE, REQUIRED, OPTIONALS>
 } & (AWAITED extends true ? { awaited: true }
-:   AWAITED extends false ? { awaited?: false }
-:   { awaited?: AWAITED })
+: AWAITED extends false ? { awaited?: false }
+: { awaited?: AWAITED }) &
+    (MAYBE extends true ? { maybe: true }
+    : MAYBE extends false ? { maybe?: false }
+    : { maybe?: MAYBE })
 
 /** True when any module in the list is `_awaited: true` (params are skipped). */
 export type RequiredHaveAwaited<REQUIRED extends readonly unknown[]> =
     REQUIRED extends [infer FIRST, ...infer REST extends unknown[]] ?
         FIRST extends { _awaited: infer A } ?
-            A extends true ? true
+            A extends true ?
+                true
             :   RequiredHaveAwaited<REST>
         :   RequiredHaveAwaited<REST>
     :   false
@@ -109,9 +121,7 @@ export type RequiredHaveAwaited<REQUIRED extends readonly unknown[]> =
 export type EffectiveAwaited<
     PLAN_AWAITED extends boolean | undefined,
     REQUIRED extends readonly unknown[]
-> =
-    PLAN_AWAITED extends true ? true
-    :   RequiredHaveAwaited<REQUIRED>
+> = PLAN_AWAITED extends true ? true : RequiredHaveAwaited<REQUIRED>
 
 type OptionalRequestKeys<REQ> = {
     [K in keyof REQ]-?: undefined extends REQ[K] ? K : never
@@ -188,7 +198,7 @@ export interface Module<
         },
         TYPE2 extends THIS["_type"],
         REQUIRED2 extends OriginalService[] = [],
-        OPTIONALS2 extends Param[] = []
+        OPTIONALS2 extends OptionalService[] = []
     >(
         this: THIS,
         plan: ModulePlanGuard<THIS["tm"], TYPE2, REQUIRED2, OPTIONALS2>
@@ -229,7 +239,7 @@ export interface Module<
     /** Array of services this service depends on */
     _required: OriginalService[]
     /** Array of optional request services this service may depend on */
-    _optionals: Param[]
+    _optionals: OptionalService[]
     _team: UnknownService[]
     _hired: HIRED
     /** Factory function that creates the service's value from its dependencies */
@@ -244,12 +254,22 @@ export interface Module<
         lazyMarket: RegistryRecord
     ) => Supplier<THIS>
     _mock: MOCK
+    /**
+     * True when `maybe: true` on the plan: factory may return `_type | undefined`
+     * while `_type` stays `T`. The runner throws only if the factory reading
+     * this trademark listed it under `required` (not `optionals`).
+     */
+    _maybe: boolean
 }
 
 export type UnknownService = UnknownModule | Param
 export type OriginalService = UnknownService & {
     _mock: false
 }
+
+/** A `maybe: true` module. Allowed in `optionals` alongside params. */
+export type MaybeModule = UnknownModule & { _maybe: true }
+export type OptionalService = Param | MaybeModule
 
 export type UnknownModule = Module<
     string,
@@ -266,7 +286,7 @@ export type Mock<
     MODULE extends UnknownModule,
     TYPE2 extends MODULE["_type"],
     REQUIRED2 extends OriginalService[] = [],
-    OPTIONALS2 extends Param[] = []
+    OPTIONALS2 extends OptionalService[] = []
 > = Omit<
     Module<
         MODULE["tm"],
@@ -295,7 +315,8 @@ export type ModuleSupplier<MODULE extends UnknownModule> = {
      * `Promise<Promise<…>>` even if `_type` was inferred as `Promise<T>`
      * from an async factory (the runner already awaits it).
      */
-    get: () => MODULE["_awaited"] extends true ? Promise<Awaited<MODULE["_type"]>>
+    get: () => MODULE["_awaited"] extends true ?
+        Promise<Awaited<MODULE["_type"]>>
     :   MODULE["_type"]
     /**
      * Sync teams: unwrapped dep values (`.get()` of each supply).
@@ -316,47 +337,83 @@ export type ParamSupplier<PARAM extends Param> = {
 
 export type Supplier<SERVICE extends UnknownService> =
     SERVICE extends Param ? ParamSupplier<SERVICE>
-    : ModuleSupplier<Extract<SERVICE, UnknownModule>>
+    :   ModuleSupplier<Extract<SERVICE, UnknownModule>>
+
+/**
+ * A module whose request slots inherited from `CALLER` are optional — the
+ * nested `ctx` graph already has those supplies.
+ */
+type CtxRoot<
+    SERVICE extends UnknownModule,
+    CALLER extends Pick<UnknownModule, "_optionals" | "_required">
+> = Merge<
+    SERVICE,
+    {
+        _caller: Merge<
+            ModuleSupplier<UnknownModule>,
+            {
+                market: MarketPlan<{
+                    required: CALLER["_required"]
+                    optionals: CALLER["_optionals"]
+                }>
+            }
+        >
+        _reqType: Omit<
+            SERVICE["_reqType"],
+            keyof Request<{
+                required: CALLER["_required"]
+                optionals: CALLER["_optionals"]
+            }>
+        > &
+            Partial<
+                Request<{
+                    required: CALLER["_required"]
+                    optionals: CALLER["_optionals"]
+                }>
+            >
+    }
+>
+
+type CtxHire<
+    ROOT extends UnknownModule,
+    HIRED extends UnknownModule[]
+> = Module<
+    ROOT["tm"],
+    ROOT["_type"],
+    ROOT["_optionalKeys"],
+    ROOT["_caller"],
+    AfterHireRequest<ROOT, HIRED>,
+    MergeStringTuples<
+        ROOT["_hired"],
+        {
+            [K in keyof HIRED]: HIRED[K]["tm"]
+        }
+    >,
+    ROOT["_mock"],
+    ROOT["_awaited"] extends true ? true : RequiredHaveAwaited<HIRED>
+>
 
 /**
  * ctx transforms modules into contextualized modules that can be called again with new specs.
- * This enables dynamic dependency injection within a module's factory.
+ * Extra modules after the root are hired onto that nested graph. Like the root,
+ * they use the entry-point hire of that trademark when there is one.
+ * `.hire()` after `ctx` still overwrites.
  * @typeParam MODULE - The current module providing context
- * @returns A function that takes a module and returns it with a contextualized call method
+ * @returns A function that takes a root module (and optional companions) and returns it contextualized
  * @public
  */
 export type Ctx<
     CALLER extends Pick<UnknownModule, "_optionals" | "_required">
-> = <SERVICE extends UnknownService>(
-    service: SERVICE
-) => SERVICE extends UnknownModule ?
-    Merge<
-        SERVICE,
-        {
-            _caller: Merge<
-                ModuleSupplier<UnknownModule>,
-                {
-                    market: MarketPlan<{
-                        required: CALLER["_required"]
-                        optionals: CALLER["_optionals"]
-                    }>
-                }
-            >
-            _reqType: Omit<
-                SERVICE["_reqType"],
-                keyof Request<{
-                    required: CALLER["_required"]
-                    optionals: CALLER["_optionals"]
-                }>
-            > &
-                Partial<
-                    Request<{
-                        required: CALLER["_required"]
-                        optionals: CALLER["_optionals"]
-                    }>
-                >
-        }
-    >
+> = <
+    SERVICE extends UnknownService,
+    const HIRED extends UnknownModule[] = []
+>(
+    service: SERVICE,
+    ...hired: [SERVICE] extends [UnknownModule] ? HiredGuard<SERVICE, HIRED>
+    :   []
+) => [SERVICE] extends [UnknownModule] ?
+    HIRED extends [] ? CtxRoot<SERVICE, CALLER>
+    :   CtxHire<CtxRoot<SERVICE, CALLER>, HIRED>
 :   SERVICE
 
 export type Cacher = <TYPE>(
@@ -381,6 +438,7 @@ export type {
     CircularModuleError,
     DuplicateServiceError,
     HiredGuard as HireArg,
+    MixedFormError,
     ModulePlanGuard,
     Team
 } from "#types/guards"

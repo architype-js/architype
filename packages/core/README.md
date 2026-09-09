@@ -347,9 +347,9 @@ const $myDrafts = service("myDrafts").module({
 | `service(tm)`                   | Declare a named identity. `tm` is the runtime-validated graph key (trademark).                                                               |
 | `.param<T>()`                   | A typed runtime input supplied at the request entry point.                                                                                   |
 | `.init(value)`                  | Give a param a default value so it can be omitted from `request(...)`.                                                                       |
-| `.module({ ... })`              | A graph node: a value derived from params and other modules. Chain after `.param()` to fill that param.                                      |
+| `.module({ ... })`              | A graph node: a value derived from params and other modules. Chain after `.param()` for a same-trademark module dependents declare.          |
 | `required`                      | Dependencies that must be available to the factory.                                                                                          |
-| `optionals`                     | Params a module can use if supplied; factories see them as `T \| undefined`.                                                                 |
+| `optionals`                     | Params or `maybe` modules a module can use if supplied; factories see them as `T \| undefined`.                                              |
 | `factory`                       | The function that produces the module value from inferred supplies and `ctx`.                                                                |
 | `warmup`                        | Optional hook invoked after the factory returns, useful for eager warming of lazy values.                                                    |
 | `.caching(config)`              | Enable cross-request caching after `.module(...)`.                                                                                           |
@@ -358,7 +358,7 @@ const $myDrafts = service("myDrafts").module({
 | `.provision()`                  | Pre-resolve graph parts that do not depend on open request-time params.                                                                      |
 | `.invalidate()`                 | Bump a cached module's version so it and downstream cached modules recompute.                                                                |
 | `.mock()` + `.hire()`           | Replace part of a cascade without changing downstream call sites.                                                                            |
-| `.param().module()` + `.hire()` | Fill a shared param at the entry-point with a same-trademark module. Remaining open params still show up as missing `.request()` properties. |
+| `.param().module()`             | A module sharing a param's trademark and type. Dependents `required` the module; a param slot takes a stamped value.                         |
 | `ctx(...)`                      | Create a nested request scope from inside a factory.                                                                                         |
 | `index(...)`                    | Key suppliers by trademark for the object shape `.request(...)` expects.                                                                     |
 | `supplier.get()`                | Read the requested module's value.                                                                                                           |
@@ -435,7 +435,7 @@ supplier.market.profile.get()
 
 ### Optionals
 
-Put a param in `optionals` when a module can use it if present but should still resolve without it.
+Put a param or a `maybe: true` module in `optionals` when a module can use it if present but should still resolve without it. Definite modules stay in `required`.
 
 ```ts
 const $config = service("config").param<{ apiUrl: string }>()
@@ -457,7 +457,7 @@ const signedIn = $client
     .get()
 ```
 
-Inside the factory, `auth` is inferred as `{ token: string } | undefined`.
+Inside the factory, `auth` is inferred as `{ token: string } | undefined`. A loader that may miss uses `maybe: true` — see [maybe values](#maybe-values).
 
 ### Nested Request Scopes with ctx(...)
 
@@ -520,6 +520,20 @@ await sendMoney("receiver_1", 25)
 ```
 
 The outer request still sees the sender session, so `$sendMoney` subtracts money from `sender_1`. The nested `ctx($receiveMoney).request(...)` call swaps `$session` to `receiver_1`, so `$receiveMoney` loads and updates the receiver's account under the receiver's permissions. `$db` is inherited from the outer request; only `$session` changes for the nested request scope.
+
+Pass more modules after the root to hire them onto that nested graph in one call. Those companions are reachable from `.supplies`, and like the root they use the entry-point hire of that trademark when there is one:
+
+```ts
+const graph = ctx($createTx, $createTally, $postWallet).request({})
+const createTx = graph.get()
+const { createTally, postWallet } = graph.supplies
+```
+
+`.hire()` after `ctx` still overwrites the entry-point for those trademarks:
+
+```ts
+ctx($createTx, $createTally).hire($postWallet)
+```
 
 ### Initialized Params
 
@@ -607,6 +621,41 @@ What that means in practice:
 - **`.get()` stays a Promise.** Any module whose team includes an awaited module has `.get()` typed as `Promise<Awaited<_type>>`.
 - **`.supplies` becomes a Promise.**
 
+### Maybe values
+
+The dual of `awaited: true`. **`maybe: true` is a factory mark** on a module plan — not a param, not `.of()`. Pass it when the factory returns `T | undefined` but the module’s `_type` should stay **`T`**. Dependents that `required` the trademark still see `T`. The runner throws `Dependency <tm> is not available` only if that trademark is **required** by the factory reading it **and** the value is a **miss**: the slot is empty, or a `maybe: true` factory returned `undefined`. Dependents that list it under `optionals` see `T | undefined` and do not throw.
+
+```ts
+const $card = service("card").param<{ id: string }>()
+
+const $cardFromDb = $card.module({
+    maybe: true,
+    awaited: true,
+    required: [$cardId, $db],
+    factory: async ({ cardId, db }) => db.cards.findById(cardId) // Card | undefined
+})
+
+const $title = service("title").module({
+    required: [$cardFromDb],
+    factory: ({ card }) => card.id // `{ id: string }`, miss throws
+})
+
+const $preview = service("preview").module({
+    optionals: [$cardFromDb],
+    factory: ({ card }) => card?.id ?? "none" // `{ id: string } | undefined`
+})
+```
+
+What that means in practice:
+
+- **`_type` stays `T`.** Without `maybe: true`, a factory that returns `T | undefined` is a type error.
+- **`required` supplies stay `T`.** A miss throws when that factory reads the supply.
+- **`optionals` still sees absence.** Same maybe module, no throw. A maybe module may itself sit in `optionals` (auto-wires; the factory sees `T | undefined`).
+- **A module overwrites a param of the same trademark.** `$title` may `required` the implement while a sibling still `required`s the param; the implement wins the slot. Stamp `$cardFromDb.of(card)` (the module), not `$card.of(card)`, once that graph holds the implement. Hiring the implement onto a param-declared graph is allowed.
+- **`.of()` is always the slot type.** Stamp a definite `T`, or omit the key (`index(value ? $card.of(value) : undefined)`). There is no `.maybe()` on params.
+- **Slot-typed `undefined` is a value.** `param<Card | undefined>().of(undefined)` on a required read does not throw — the param is not maybe. A `maybe: true` implement of that same param is allowed: its factory `undefined` is a miss (required readers throw); the stamp of `undefined` is not.
+- **`null` is a value.** `param<Card | null>()` is a fact about the slot, unrelated to `maybe: true`.
+
 ### Caching
 
 By default, factories are memoized inside one request snapshot. Call `.caching(...)` after `.module(...)` when a module should reuse values across separate requests and `.request(...)` calls. Remember, paramodules is entirely stateless, unless you activate caching.
@@ -684,7 +733,7 @@ const res6 = $profileSummary
 const isCached5 = res5 === res6 // false, because the hired mock has its own _implementId
 ```
 
-The cache key is built from the cached module identity and its cascade: the current module trademark, its version, implement identity when present (param-chained modules and mocks), transitive module versions, and **every stamped (`.of(...)`) value** — params and modules alike. Factory-resolved modules contribute identity only (`tm` + implement id + `_version`); their inputs are already keyed through the cascade. The serializer runs on stamped values and should reject anything it cannot handle. That means different request stamps get different cache entries, invalidating an upstream cached module changes the cache key for downstream cached modules, and two hired fills of the same param do not share an entry.
+The cache key is built from the cached module identity and its cascade: the current module trademark, its version, implement identity when present (param-chained modules and mocks), transitive module versions, and **every stamped (`.of(...)`) value** — params and modules alike. Factory-resolved modules contribute identity only (`tm` + implement id + `_version`); their inputs are already keyed through the cascade. The serializer runs on stamped values and should reject anything it cannot handle. That means different request stamps get different cache entries, invalidating an upstream cached module changes the cache key for downstream cached modules, and two hired mocks of the same module do not share an entry.
 
 For promise-returning factories, use `@paramodules/resource-cacher`, which wraps `@epic-web/cachified`.
 
@@ -959,17 +1008,28 @@ Creates a replacement module with the same trademark and a compatible value type
 const profile = $profile.hire($userMock).request({}).get()
 ```
 
-Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks. If the graph `required`s a param, `hire()` type-errors until a same-trademark module is included (or the param is stamped with `.of(...)`).
+Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks, or join the graph when the trademark is not on it yet. A module overwrites a param of the same trademark; stamp `.of` on that module.
 
-### `ctx(service)`
+To carry an implement's value into a graph that still holds only the param, resolve it on its own graph and stamp the result:
+
+```ts
+const edition = await $editionFromDb.request(index($editionId.of(id))).get()
+const page = await $page.request(index($edition.of(edition))).get()
+```
+
+A `maybe: true` implement that misses throws only when the factory reading that trademark listed it under `required` (not `optionals`).
+
+### `ctx(root, ...modules)`
 
 ```ts
 const value = ctx($otherModule)
     .request(index($param.of(next)))
     .get()
+
+const graph = ctx($createTx, $createTally).request({})
 ```
 
-Creates a nested request scope from inside a factory so another module can be requested with different params without mutating the outer request.
+Creates a nested request scope from inside a factory so another module can be requested with different params without mutating the outer request. Extra modules after the root are hired onto that graph; like the root, they swap if hired at the entry-point. `.hire()` after `ctx` overwrites the entry-point.
 
 ### `supplier.get()`
 
