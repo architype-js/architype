@@ -521,6 +521,20 @@ await sendMoney("receiver_1", 25)
 
 The outer request still sees the sender session, so `$sendMoney` subtracts money from `sender_1`. The nested `ctx($receiveMoney).request(...)` call swaps `$session` to `receiver_1`, so `$receiveMoney` loads and updates the receiver's account under the receiver's permissions. `$db` is inherited from the outer request; only `$session` changes for the nested request scope.
 
+Pass more modules after the root to hire them onto that nested graph in one call. Those companions are reachable from `.supplies`, and like the root they use the entry-point hire of that trademark when there is one:
+
+```ts
+const graph = ctx($createTx, $createTally, $postWallet).request({})
+const createTx = graph.get()
+const { createTally, postWallet } = graph.supplies
+```
+
+`.hire()` after `ctx` still overwrites the entry-point for those trademarks:
+
+```ts
+ctx($createTx, $createTally).hire($postWallet)
+```
+
 ### Initialized Params
 
 Use `.init(value)` when a param has a default but requests should still be able to override it.
@@ -637,7 +651,7 @@ What that means in practice:
 - **`_type` stays `T`.** Without `maybe: true`, a factory that returns `T | undefined` is a type error.
 - **`required` supplies stay `T`.** A miss throws when that factory reads the supply.
 - **`optionals` still sees absence.** Same maybe module, no throw. A maybe module may itself sit in `optionals` (auto-wires; the factory sees `T | undefined`).
-- **One form per trademark.** `$title` declares `$cardFromDb`, not the `$card` param. Hiring `$cardFromDb` onto a graph that still holds `card` as a param is a type error and throws. Stamp `$card.of(card)` to join a param graph.
+- **A module overwrites a param of the same trademark.** `$title` may `required` the implement while a sibling still `required`s the param; the implement wins the slot. Stamp `$cardFromDb.of(card)` (the module), not `$card.of(card)`, once that graph holds the implement. Hiring the implement onto a param-declared graph is allowed.
 - **`.of()` is always the slot type.** Stamp a definite `T`, or omit the key (`index(value ? $card.of(value) : undefined)`). There is no `.maybe()` on params.
 - **Slot-typed `undefined` is a value.** `param<Card | undefined>().of(undefined)` on a required read does not throw — the param is not maybe. A `maybe: true` implement of that same param is allowed: its factory `undefined` is a miss (required readers throw); the stamp of `undefined` is not.
 - **`null` is a value.** `param<Card | null>()` is a fact about the slot, unrelated to `maybe: true`.
@@ -994,9 +1008,9 @@ Creates a replacement module with the same trademark and a compatible value type
 const profile = $profile.hire($userMock).request({}).get()
 ```
 
-Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks, or join the graph when the trademark is not on it yet.
+Returns a new module with mocks merged into its dependency tree. Hired modules override matching trademarks, or join the graph when the trademark is not on it yet. A module overwrites a param of the same trademark; stamp `.of` on that module.
 
-**Modules only.** A trademark is a param or a module in any one graph, never both, so hiring onto a trademark this graph holds as a param is a type error and throws. Params are filled by stamped values. To carry an implement's value into a graph built on the param, resolve it on its own graph and stamp the result:
+To carry an implement's value into a graph that still holds only the param, resolve it on its own graph and stamp the result:
 
 ```ts
 const edition = await $editionFromDb.request(index($editionId.of(id))).get()
@@ -1005,15 +1019,17 @@ const page = await $page.request(index($edition.of(edition))).get()
 
 A `maybe: true` implement that misses throws only when the factory reading that trademark listed it under `required` (not `optionals`).
 
-### `ctx(service)`
+### `ctx(root, ...modules)`
 
 ```ts
 const value = ctx($otherModule)
     .request(index($param.of(next)))
     .get()
+
+const graph = ctx($createTx, $createTally).request({})
 ```
 
-Creates a nested request scope from inside a factory so another module can be requested with different params without mutating the outer request.
+Creates a nested request scope from inside a factory so another module can be requested with different params without mutating the outer request. Extra modules after the root are hired onto that graph; like the root, they swap if hired at the entry-point. `.hire()` after `ctx` overwrites the entry-point.
 
 ### `supplier.get()`
 

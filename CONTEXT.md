@@ -19,24 +19,34 @@ _Avoid_: Service (day to day), function, provider
 **Cascade**:
 Dependents inherit a module’s dependency stack.
 
+**Form**:
+Param or module — which one a trademark is on a given graph. One form per trademark per graph.
+_Avoid_: kind, flavor, shape, mixed slot
+
+**Param graph**:
+A cascade whose slot for a trademark is the param.
+_Avoid_: client graph, isomorphic graph, homomorphic
+
+**Implement graph**:
+A cascade whose slot for that trademark is the module — the implement, or a hire of it.
+_Avoid_: server graph, module graph (when meaning the whole cascade)
+
 **Request**:
 One resolution of a module for one set of stamps and hires.
 
 ### Filling a slot
 
 **Stamp**:
-A definite value for a param or module on a request. The slot’s type, not the type plus absence.
-_Avoid_: Specify, of-undefined (that is unspecify, unless `undefined` is in the slot type), stub (when meaning a real value)
+A definite value for a param or module on a request. The slot’s type, not the type plus absence. When a module has overwritten a param of the same trademark, the stamp is `.of` on that module.
+_Avoid_: Specify, of-undefined (that is unspecify, unless `undefined` is in the slot type), stub (when meaning a real value), `.of` on the param after the graph holds the implement
 
 **Unspecify**:
 Leave a slot empty on this request. A default applies if the param has one.
 _Avoid_: Stamp undefined (when it is not in the slot type), omit (as a second verb), erase (except when meaning drop a parent stamp)
 
 **Hire**:
-Put a producer on this request’s graph. Hire does not stamp a slot whose producer can miss.
-Modules only: a trademark this graph holds as a param takes a stamp, never a hire.
-A trademark is a param or a module in one graph, never both (see ADR 0004).
-_Avoid_: Implement (that is declaring the factory), inject, provide
+Put a producer on this request’s graph. Hire does not stamp a slot whose producer can miss. A hired or required module overwrites a param of the same trademark — the param is gone from that binding, it is not a second form. Two modules or two params, last declaration wins. Hire is shallow: it substitutes this module’s own required list, not nested children.
+_Avoid_: Implement (that is declaring the factory), inject, provide, mix (hire is overwrite)
 
 **Implement**:
 A factory that fills an existing param’s trademark. The param’s type stays the concept; the factory may miss.

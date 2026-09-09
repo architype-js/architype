@@ -1,52 +1,32 @@
 import { describe, expect, it } from "vitest"
-import { service, sleep } from "#index"
+import { service, index } from "#index"
 
 /**
- * One trademark, one form. When a module fills a param slot, every dependent
- * that declared the *param* keeps the `_awaited` gate it froze at declaration
- * time — params are never awaited — so it runs the sync factory runner and its
- * factory receives the implement's un-awaited Promise. `dedupe` rejects the mix
- * at declaration (or at `hire`) instead of resolving it silently.
+ * Hire overwrites a param of the same trademark (shallow). Stamp `.of` on
+ * the module. A mixed plan — param form and module form in one team — is
+ * MixedFormError and a runtime throw.
  */
-describe("param and module for the same trademark in one graph", () => {
-    it("rejects a hire that reaches past a param-declaring dependent", async () => {
+describe("module overwrites param of the same trademark", () => {
+    it("hires an implement onto a graph that declared the param", () => {
         const $user = service("user").param<{ id: string }>()
 
-        // Declares the param, has no awaited dep of its own: gate is false.
         const $greeting = service("greeting").module({
             required: [$user],
             factory: ({ user }) => `hi ${user.id}`
         })
 
         const $fromDb = $user.module({
-            awaited: true,
-            factory: async () => {
-                await sleep(5)
-                return { id: "ada" }
-            }
+            factory: () => ({ id: "ada" })
         })
 
-        const $page = service("page").module({
-            required: [$greeting],
-            factory: ({ greeting }) => greeting
-        })
-
-        expect($greeting._awaited).toBe(false)
-        expect(() =>
-            // @ts-expect-error - "user" is a param on this graph
-            $page.hire($fromDb)
-        ).toThrow(/trademark "user" is a param on this graph/)
+        expect($greeting.hire($fromDb).request({}).get()).toBe("hi ada")
     })
 
-    it("rejects a sibling bringing the implement next to a param dependent", () => {
+    it("type-errors a plan that requireds a param-child and an implement-child", () => {
         const $user = service("user").param<{ id: string }>()
 
         const $fromDb = $user.module({
-            awaited: true,
-            factory: async () => {
-                await sleep(5)
-                return { id: "ada" }
-            }
+            factory: () => ({ id: "ada" })
         })
 
         const $sidebar = service("sidebar").module({
@@ -59,20 +39,33 @@ describe("param and module for the same trademark in one graph", () => {
             factory: ({ user }) => `hi ${user.id}`
         })
 
-        // No hire anywhere: the two forms meet in $page's team.
         expect(() =>
             service("page").module({
-                // @ts-expect-error - "user" is a param in $greeting, a module in $sidebar
+                // @ts-expect-error - MixedFormError
                 required: [$sidebar, $greeting],
-                factory: () => "page"
+                factory: () => ""
             })
-        ).toThrow(/param in one/)
+        ).toThrow(
+            'Trademark "user" is a param in one dependency and a module in another'
+        )
+
+        expect(() =>
+            service("pageFirst").module({
+                // @ts-expect-error - MixedFormError
+                required: [$greeting, $sidebar],
+                factory: () => ""
+            })
+        ).toThrow(
+            'Trademark "user" is a param in one dependency and a module in another'
+        )
     })
 
-    it("names the trademark and the owner in the error", () => {
+    it("type-errors a plan that requireds the implement beside the param-child", () => {
         const $user = service("user").param<{ id: string }>()
 
-        const $fromDb = $user.module({ factory: () => ({ id: "ada" }) })
+        const $fromDb = $user.module({
+            factory: () => ({ id: "from-db" })
+        })
 
         const $greeting = service("greeting").module({
             required: [$user],
@@ -81,14 +74,116 @@ describe("param and module for the same trademark in one graph", () => {
 
         expect(() =>
             service("page").module({
-                // @ts-expect-error - "user" is a param in $greeting, a module in $fromDb
+                // @ts-expect-error - MixedFormError
                 required: [$fromDb, $greeting],
-                factory: () => "page"
+                factory: () => ""
             })
-        ).toThrow(/page: trademark "user" is a param in one dependency/)
+        ).toThrow(
+            'Trademark "user" is a param in one dependency and a module in another'
+        )
+
+        expect(() =>
+            service("pageFirst").module({
+                // @ts-expect-error - MixedFormError
+                required: [$greeting, $fromDb],
+                factory: () => ""
+            })
+        ).toThrow(
+            'Trademark "user" is a param in one dependency and a module in another'
+        )
     })
 
-    it("rejects hiring an implement onto the module that declared the param", () => {
+    it("climbs a hired twin so siblings share the implement form", () => {
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            factory: () => ({ id: "ada" })
+        })
+
+        const $sidebar = service("sidebar").module({
+            required: [$fromDb],
+            factory: ({ user }) => `side ${user.id}`
+        })
+
+        const $greeting = service("greeting").module({
+            required: [$user],
+            factory: ({ user }) => `hi ${user.id}`
+        })
+
+        const $greetingImpl = $greeting.hire($fromDb)
+
+        const $page = service("page").module({
+            required: [$sidebar, $greetingImpl],
+            factory: ({ sidebar, greeting }) => `${sidebar}/${greeting}`
+        })
+
+        expect($page.request({}).get()).toBe("side ada/hi ada")
+        expect(
+            $page.request(index($fromDb.of({ id: "bob" }))).get()
+        ).toBe("side bob/hi bob")
+        expect(
+            $page
+                .request(
+                    // @ts-expect-error - stamp the module, not the param
+                    index($user.of({ id: "eve" }))
+                )
+                .get()
+        ).toBe("side eve/hi eve")
+    })
+
+    it("climbs a hired twin when the param-graph child is listed first", () => {
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            factory: () => ({ id: "ada" })
+        })
+
+        const $sidebar = service("sidebar").module({
+            required: [$fromDb],
+            factory: ({ user }) => `side ${user.id}`
+        })
+
+        const $greeting = service("greeting").module({
+            required: [$user],
+            factory: ({ user }) => `hi ${user.id}`
+        })
+
+        const $greetingImpl = $greeting.hire($fromDb)
+
+        const $page = service("page").module({
+            required: [$greetingImpl, $sidebar],
+            factory: ({ sidebar, greeting }) => `${sidebar}/${greeting}`
+        })
+
+        expect($page.request({}).get()).toBe("side ada/hi ada")
+        expect(
+            $page.request(index($fromDb.of({ id: "bob" }))).get()
+        ).toBe("side bob/hi bob")
+    })
+
+    it("uses the hired twin when the implement is a direct sibling", () => {
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            factory: () => ({ id: "from-db" })
+        })
+
+        const $greeting = service("greeting").module({
+            required: [$user],
+            factory: ({ user }) => `hi ${user.id}`
+        })
+
+        const $greetingImpl = $greeting.hire($fromDb)
+
+        const $page = service("page").module({
+            required: [$greetingImpl],
+            factory: ({ greeting }) => greeting
+        })
+
+        expect($page.request({}).get()).toBe("hi from-db")
+    })
+
+    it("types the request slot as the module after overwrite", () => {
         const $user = service("user").param<{ id: string }>()
 
         const $greeting = service("greeting").module({
@@ -96,13 +191,46 @@ describe("param and module for the same trademark in one graph", () => {
             factory: ({ user }) => `hi ${user.id}`
         })
 
-        const $fromDb = $user.module({ factory: () => ({ id: "ada" }) })
+        const $fromDb = $user.module({
+            factory: () => ({ id: "ada" })
+        })
 
-        // A param slot takes a value, never a module — even its own implement.
-        expect(() =>
-            // @ts-expect-error - "user" is a param on this graph
-            $greeting.hire($fromDb)
-        ).toThrow(/trademark "user" is a param on this graph/)
+        const hired = $greeting.hire($fromDb)
+
+        expect(hired.request(index($fromDb.of({ id: "bob" }))).get()).toBe(
+            "hi bob"
+        )
+
+        expect(
+            hired
+                .request(
+                    // @ts-expect-error - stamp the module, not the param
+                    index($user.of({ id: "eve" }))
+                )
+                .get()
+        ).toBe("hi eve")
+    })
+
+    it("throws when hiring the implement onto a parent that still requireds the param-graph child", () => {
+        const $user = service("user").param<{ id: string }>()
+
+        const $fromDb = $user.module({
+            factory: () => ({ id: "ada" })
+        })
+
+        const $greeting = service("greeting").module({
+            required: [$user],
+            factory: ({ user }) => `hi ${user.id}`
+        })
+
+        const $page = service("page").module({
+            required: [$greeting],
+            factory: ({ greeting }) => greeting
+        })
+
+        expect(() => $page.hire($fromDb)).toThrow(
+            'Trademark "user" is a param in one dependency and a module in another'
+        )
     })
 
     it("still hires a module over a module", () => {

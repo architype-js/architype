@@ -153,15 +153,6 @@ export function assertModule(
     assertHasProperty(service.tm, service, "_module")
     assertHasProperty(service.tm, service, "_mock")
 
-    if (
-        !allowMocks &&
-        "_hired" in service &&
-        Array.isArray(service._hired) &&
-        service._hired.length > 0
-    ) {
-        throw new TypeError(`Cannot depend on ${service.tm} service`)
-    }
-
     if (!allowMocks && service._mock) {
         throw new TypeError(`Cannot depend on ${service.tm} mock service`)
     }

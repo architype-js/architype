@@ -340,44 +340,80 @@ export type Supplier<SERVICE extends UnknownService> =
     :   ModuleSupplier<Extract<SERVICE, UnknownModule>>
 
 /**
+ * A module whose request slots inherited from `CALLER` are optional — the
+ * nested `ctx` graph already has those supplies.
+ */
+type CtxRoot<
+    SERVICE extends UnknownModule,
+    CALLER extends Pick<UnknownModule, "_optionals" | "_required">
+> = Merge<
+    SERVICE,
+    {
+        _caller: Merge<
+            ModuleSupplier<UnknownModule>,
+            {
+                market: MarketPlan<{
+                    required: CALLER["_required"]
+                    optionals: CALLER["_optionals"]
+                }>
+            }
+        >
+        _reqType: Omit<
+            SERVICE["_reqType"],
+            keyof Request<{
+                required: CALLER["_required"]
+                optionals: CALLER["_optionals"]
+            }>
+        > &
+            Partial<
+                Request<{
+                    required: CALLER["_required"]
+                    optionals: CALLER["_optionals"]
+                }>
+            >
+    }
+>
+
+type CtxHire<
+    ROOT extends UnknownModule,
+    HIRED extends UnknownModule[]
+> = Module<
+    ROOT["tm"],
+    ROOT["_type"],
+    ROOT["_optionalKeys"],
+    ROOT["_caller"],
+    AfterHireRequest<ROOT, HIRED>,
+    MergeStringTuples<
+        ROOT["_hired"],
+        {
+            [K in keyof HIRED]: HIRED[K]["tm"]
+        }
+    >,
+    ROOT["_mock"],
+    ROOT["_awaited"] extends true ? true : RequiredHaveAwaited<HIRED>
+>
+
+/**
  * ctx transforms modules into contextualized modules that can be called again with new specs.
- * This enables dynamic dependency injection within a module's factory.
+ * Extra modules after the root are hired onto that nested graph. Like the root,
+ * they use the entry-point hire of that trademark when there is one.
+ * `.hire()` after `ctx` still overwrites.
  * @typeParam MODULE - The current module providing context
- * @returns A function that takes a module and returns it with a contextualized call method
+ * @returns A function that takes a root module (and optional companions) and returns it contextualized
  * @public
  */
 export type Ctx<
     CALLER extends Pick<UnknownModule, "_optionals" | "_required">
-> = <SERVICE extends UnknownService>(
-    service: SERVICE
-) => SERVICE extends UnknownModule ?
-    Merge<
-        SERVICE,
-        {
-            _caller: Merge<
-                ModuleSupplier<UnknownModule>,
-                {
-                    market: MarketPlan<{
-                        required: CALLER["_required"]
-                        optionals: CALLER["_optionals"]
-                    }>
-                }
-            >
-            _reqType: Omit<
-                SERVICE["_reqType"],
-                keyof Request<{
-                    required: CALLER["_required"]
-                    optionals: CALLER["_optionals"]
-                }>
-            > &
-                Partial<
-                    Request<{
-                        required: CALLER["_required"]
-                        optionals: CALLER["_optionals"]
-                    }>
-                >
-        }
-    >
+> = <
+    SERVICE extends UnknownService,
+    const HIRED extends UnknownModule[] = []
+>(
+    service: SERVICE,
+    ...hired: [SERVICE] extends [UnknownModule] ? HiredGuard<SERVICE, HIRED>
+    :   []
+) => [SERVICE] extends [UnknownModule] ?
+    HIRED extends [] ? CtxRoot<SERVICE, CALLER>
+    :   CtxHire<CtxRoot<SERVICE, CALLER>, HIRED>
 :   SERVICE
 
 export type Cacher = <TYPE>(
@@ -402,6 +438,7 @@ export type {
     CircularModuleError,
     DuplicateServiceError,
     HiredGuard as HireArg,
+    MixedFormError,
     ModulePlanGuard,
     Team
 } from "#types/guards"

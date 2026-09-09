@@ -33,7 +33,7 @@ describe("param modules (DI)", () => {
         expect($title.request({}).get()).toBe("daily-today")
     })
 
-    it("rejects hiring a param trademark, co-hired module or not", () => {
+    it("hires an implement onto a graph that declared the param", () => {
         const $edition = service("edition").param<{ id: string }>()
 
         const $title = service("title").module({
@@ -54,10 +54,12 @@ describe("param modules (DI)", () => {
             factory: ({ spotBids }) => spotBids[0]
         })
 
-        expect(() =>
-            // @ts-expect-error - "edition" is a param on this graph
-            $title.hire($fromDb, $currentBid)
-        ).toThrow(/trademark "edition" is a param on this graph/)
+        const $spotBidsImpl = $spotBids.hire($fromDb)
+        const $currentBidImpl = $currentBid.hire($spotBidsImpl)
+
+        expect(
+            $title.hire($fromDb, $currentBidImpl).request({}).get()
+        ).toBe("daily-today")
     })
 
     it("type-errors request() until the param is filled with .of()", () => {

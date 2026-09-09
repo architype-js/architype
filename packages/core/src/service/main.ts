@@ -147,7 +147,6 @@ export function team(
                     throw new Error("Circular dependency detected")
                 }
                 return s
-            }),
-        tm
+            })
     )
 }

@@ -5,10 +5,8 @@ import type {
     Module,
     OptionalService,
     RequiredHaveAwaited,
-    UnknownModule,
-    UnknownService
+    UnknownModule
 } from "#types/public"
-import { isModule } from "#utils"
 import type { Supplies } from "#types/records"
 import type { MergeStringTuples } from "#types/utils"
 import { assertModules } from "#validation"
@@ -16,39 +14,14 @@ import { assertModules } from "#validation"
 /**
  * Hires additional modules into the dependency chain of this module.
  * This allows replacing or adding modules composition-root style for testing,
- * mocking, or batching. Hired modules override modules with matching
- * names in the transitive dependency tree.
- *
- * Modules only: a trademark this graph holds as a param takes a stamped value
- * (`.of()`), so hiring onto it throws.
+ * mocking, or batching. Hired modules override matching trademarks, or join
+ * the graph when the trademark is not on it yet. A module overwrites a param
+ * of the same trademark.
  *
  * @param hired - Modules to hire (replace/add to the team)
  * @returns A new module with the hired modules merged into the team
  * @public
  */
-/**
- * Hire puts a module on a graph; a param slot takes a value. Hiring a module
- * onto a param trademark would leave the two forms sharing one trademark, and
- * every param-declaring dependent keeps the sync `_awaited` gate it froze at
- * declaration time.
- */
-function assertNoParamHire(
-    tm: string,
-    team: UnknownService[],
-    hired: UnknownModule[]
-) {
-    for (const module of hired) {
-        const param = team.find(
-            (member) => member.tm === module.tm && !isModule(member)
-        )
-        if (param) {
-            throw new Error(
-                `${tm}: trademark "${module.tm}" is a param on this graph. Fill it with a stamped value (.of()); hire only modules.`
-            )
-        }
-    }
-}
-
 export function Hire() {
     return function hire<
         THIS extends Omit<UnknownModule, "_hired"> & {
@@ -74,7 +47,6 @@ export function Hire() {
         THIS["_awaited"] extends true ? true : RequiredHaveAwaited<HIRED>
     > {
         assertModules(this.tm, hired, true)
-        assertNoParamHire(this.tm, this._team, hired)
         const optionalTms = new Set(
             this._optionals.map((optional) => optional.tm)
         )
